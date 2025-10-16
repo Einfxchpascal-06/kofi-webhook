@@ -22,29 +22,36 @@ app.get("/", (req, res) => {
 // ☕ Webhook-Endpoint für Ko-fi
 app.post("/kofi", async (req, res) => {
   try {
+    // 📨 Alles anzeigen, was ankommt
     console.log("📩 Anfrage empfangen:", req.body);
 
-    const data = req.body;
-
-    // Token auslesen – Ko-fi verschachtelt ihn manchmal
-    const token = data.verification_token || (data.data ? data.data.verification_token : null);
-
-    if (token !== KOFI_TOKEN) {
-      console.warn("⚠️ Ungültiger Verification Token:", token);
-      // Wir brechen NICHT ab, Ko-fi ist trotzdem vertrauenswürdig
+    // Wenn Ko-fi "data" als String schickt → in echtes Objekt umwandeln
+    let data = req.body;
+    if (typeof req.body.data === "string") {
+      try {
+        data = JSON.parse(req.body.data);
+      } catch (e) {
+        console.warn("⚠️ Konnte data nicht parsen:", e);
+      }
     }
 
-    // Nur Spenden-Events verarbeiten
-    if (data.type === "Donation" || data.data?.type === "Donation") {
-      const donation = data.data || data;
-      const donor = donation.from_name || "Unbekannt";
-      const amount = donation.amount || "0";
-      const currency = donation.currency || "";
-      const message = donation.message || "";
+    // 🔑 Token extrahieren
+    const token = data.verification_token || req.body.verification_token;
+    if (token !== KOFI_TOKEN) {
+      console.warn("⚠️ Ungültiger Verification Token:", token);
+      // Wir brechen nicht ab, nur Warnung
+    }
+
+    // 🎁 Spende verarbeiten
+    if (data.type === "Donation") {
+      const donor = data.from_name || "Unbekannt";
+      const amount = data.amount || "0";
+      const currency = data.currency || "";
+      const message = data.message || "";
 
       console.log(`☕ Ko-fi Donation: ${donor} ${amount} ${currency} (${message})`);
 
-      // An Streamer.bot weiterleiten
+      // An Streamer.bot senden
       await fetch(STREAMERBOT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -67,6 +74,7 @@ app.post("/kofi", async (req, res) => {
     res.sendStatus(500);
   }
 });
+
 
 // 🚀 Render-Port oder lokal (Fallback 3000)
 const PORT = process.env.PORT || 3000;
