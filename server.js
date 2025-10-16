@@ -5,160 +5,220 @@ import fetch from "node-fetch";
 const app = express();
 app.use(bodyParser.json());
 
-// 🟢 Twitch Konfiguration
-const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
-const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
-const TWITCH_USER = process.env.TWITCH_USER || "McHobi74";
-const KO_FI_TOKEN = process.env.KO_FI_TOKEN || "8724041a-c3b4-4683-b309-8e08591552e2";
+const PORT = process.env.PORT || 3000;
+const TWITCH_SECRET = "soundwave_secret_2025";
+const KOFI_VERIFICATION_TOKEN = "8724041a-c3b4-4683-b309-8e08591552e2";
 
+// ===== Speicher für Feed =====
 let feedEntries = [];
+const sseClients = new Set();
 
-// 💚 Testseite
-app.get("/", (req, res) => {
-  res.send("<h2>✅ Soundwave Ko-fi & Twitch Webhook läuft!</h2>");
-});
+function pushFeed(entry) {
+  feedEntries.unshift(entry);
+  if (feedEntries.length > 200) feedEntries.pop();
+  const data = `data: ${JSON.stringify(entry)}\n\n`;
+  for (const client of sseClients) {
+    try { client.write(data); } catch {}
+  }
+}
 
-// ☕ Ko-fi Webhook
+// ===== Ko-fi Webhook =====
 app.post("/kofi", (req, res) => {
   const data = req.body;
-
-  if (!data.verification_token || data.verification_token !== KO_FI_TOKEN) {
-    console.log("❌ Ungültiger Ko-fi Verification Token:", data.verification_token);
-    return res.sendStatus(403);
+  if (data.verification_token !== KOFI_VERIFICATION_TOKEN) {
+    console.log("❌ Ungültiger Ko-fi Token!");
+    return res.status(403).send("invalid token");
   }
-
-  console.log("☕ Neue Ko-fi Donation:", data);
-
+  console.log("☕ Neue Ko-fi Donation:", data.from_name, data.amount, data.currency);
   const message = `☕ ${data.from_name} spendete ${data.amount} ${data.currency} – "${data.message}"`;
-  feedEntries.unshift({ type: "kofi", message, time: new Date() });
-
+  pushFeed({ type: "kofi", message, time: Date.now() });
   res.sendStatus(200);
 });
 
-// 💜 Twitch Webhook für EventSub
-app.post("/twitch", express.json({ type: "*/*" }), async (req, res) => {
-  const messageType = req.header("Twitch-Eventsub-Message-Type");
-  const event = req.body.event;
+// ===== Twitch Webhook =====
+app.post("/twitch", (req, res) => {
+  const msgType = req.header("Twitch-Eventsub-Message-Type");
+  const body = req.body;
 
-  // Twitch-Verifizierung
-  if (messageType === "webhook_callback_verification") {
+  // Twitch Challenge bestätigen
+  if (msgType === "webhook_callback_verification") {
     console.log("✅ Twitch Webhook bestätigt.");
-    return res.send(req.body.challenge);
+    return res.status(200).send(body.challenge);
   }
 
-  // Twitch-Benachrichtigungen
-  if (messageType === "notification") {
-    const type = req.body.subscription.type;
+  // Events verarbeiten
+  if (msgType === "notification") {
+    const event = body.event;
+    const type = body.subscription?.type;
+    console.log("🎯 Twitch Event:", type);
 
-    switch (type) {
-      case "channel.follow": {
-        const message = `🟣 Follow: ${event.user_name}`;
-        console.log(message);
-        feedEntries.unshift({ type: "twitch_follow", message, time: new Date() });
-        break;
+    try {
+      if (type === "channel.follow") {
+        pushFeed({ type: "twitch_follow", message: `🟣 Follow: ${event.user_name}`, time: Date.now() });
+      } 
+      else if (type === "channel.subscribe") {
+        const tierMap = { "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3" };
+        const tier = tierMap[event.tier] || "Tier ?";
+        const months = event.cumulative_months || 1;
+        pushFeed({
+          type: "twitch_sub",
+          message: `💜 Sub: ${event.user_name} (${tier}, insgesamt ${months} Monate)`,
+          time: Date.now()
+        });
+      } 
+      else if (type === "channel.subscription.gift") {
+        pushFeed({
+          type: "twitch_gift",
+          message: `🎁 Gift Sub: ${event.user_name} → ${event.recipient_user_name}`,
+          time: Date.now()
+        });
+      } 
+      else if (type === "channel.cheer") {
+        pushFeed({
+          type: "twitch_bits",
+          message: `💎 Bits: ${event.user_name} hat ${event.bits} Bits gesendet!`,
+          time: Date.now()
+        });
+      } 
+      else if (type === "channel.channel_points_custom_reward_redemption.add") {
+        pushFeed({
+          type: "twitch_points",
+          message: `🎯 ${event.user_name} löste "${event.reward?.title || "Belohnung"}" ein!`,
+          time: Date.now()
+        });
       }
-
-      case "channel.subscribe": {
-        const tier =
-          event.tier === "1000"
-            ? "Tier 1"
-            : event.tier === "2000"
-            ? "Tier 2"
-            : event.tier === "3000"
-            ? "Tier 3"
-            : "Unbekannt";
-        const duration = event.duration_months || 1;
-        const totalMonths = event.cumulative_months || 1;
-        const message = `💜 Sub: ${event.user_name} (${tier} – ${duration} Monat(e) im Voraus, insgesamt ${totalMonths} Monat(e))`;
-        console.log(message);
-        feedEntries.unshift({ type: "twitch_sub", message, time: new Date() });
-        break;
-      }
-
-      case "channel.subscription.gift": {
-        const gifter = event.user_name || "Anonym";
-        const recipient = event.recipient_user_name || "Unbekannt";
-        const tier =
-          event.tier === "1000"
-            ? "Tier 1"
-            : event.tier === "2000"
-            ? "Tier 2"
-            : event.tier === "3000"
-            ? "Tier 3"
-            : "Unbekannt";
-        const message = `🎁 Gift Sub: ${gifter} → ${recipient} (${tier})`;
-        console.log(message);
-        feedEntries.unshift({ type: "twitch_gift", message, time: new Date() });
-        break;
-      }
-
-      case "channel.cheer": {
-        const message = `💎 Bits: ${event.user_name} hat ${event.bits} Bits gesendet!`;
-        console.log(message);
-        feedEntries.unshift({ type: "twitch_bits", message, time: new Date() });
-        break;
-      }
-
-      case "channel.channel_points_custom_reward_redemption.add": {
-        const message = `🎯 Channel Points: ${event.user_name} löste "${event.reward.title}" ein!`;
-        console.log(message);
-        feedEntries.unshift({ type: "twitch_points", message, time: new Date() });
-        break;
-      }
-
-      default:
-        console.log("📨 Unbekannter Twitch-Event-Typ:", type);
-        break;
+    } catch (err) {
+      console.log("⚠️ Fehler bei Twitch-Event:", err);
     }
   }
 
   res.sendStatus(200);
 });
 
-// 🖥️ Feed-Anzeige
-app.get("/feed", (req, res) => {
-  const html = `
-    <html>
-      <head>
-        <title>Soundwave Activity Feed</title>
-        <meta http-equiv="refresh" content="3">
-        <style>
-          body {
-            background-color: #0e0e10;
-            color: white;
-            font-family: Arial, sans-serif;
-            padding: 20px;
-          }
-          .entry {
-            margin-bottom: 10px;
-            padding: 8px 12px;
-            border-radius: 8px;
-          }
-          .kofi { background-color: #ff7f32; }
-          .twitch_follow { background-color: #9146ff; }
-          .twitch_sub { background-color: #6e46ff; }
-          .twitch_gift { background-color: #b57aff; }
-          .twitch_bits { background-color: #00c8ff; }
-          .twitch_points { background-color: #00ff95; }
-          small { color: #aaa; }
-        </style>
-      </head>
-      <body>
-        <h2>🎧 Soundwave1111 Activity Feed</h2>
-        ${feedEntries
-          .map(
-            (e) =>
-              `<div class="entry ${e.type}">
-                <b>${e.message}</b><br><small>${new Date(e.time).toLocaleTimeString()}</small>
-              </div>`
-          )
-          .join("")}
-      </body>
-    </html>
-  `;
-  res.send(html);
+// ====== Server-Sent Events für Feed ======
+app.get("/events", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  // Letzte 25 Einträge sofort senden
+  for (const e of [...feedEntries].slice(0, 25).reverse()) {
+    res.write(`data: ${JSON.stringify(e)}\n\n`);
+  }
+
+  sseClients.add(res);
+  req.on("close", () => sseClients.delete(res));
 });
 
-// 🌍 Start
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`✅ Server läuft auf Port ${PORT}`));
+// ====== Schicker Feed unter /feed ======
+app.get("/feed", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<title>Soundwave Activity Feed</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0e0e10;
+    --card: #15151a;
+    --text: #fff;
+    --muted: #a5a5b0;
+    --twitch: #9146ff;
+    --sub: #6e46ff;
+    --gift: #b57aff;
+    --bits: #00c8ff;
+    --points: #00ff95;
+    --kofi: #ff7f32;
+    --accent: #18e0d0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    padding: 12px 18px;
+    background: rgba(20,20,25,0.85);
+    border-bottom: 1px solid #222;
+    position: sticky; top: 0; backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .4px; }
+  #status { font-size: 13px; color: var(--muted); }
+  #feed {
+    flex: 1; overflow-y: auto; padding: 16px;
+    scroll-behavior: smooth;
+  }
+  .entry {
+    background: var(--card);
+    margin-bottom: 10px; padding: 10px 14px;
+    border-left: 4px solid var(--accent);
+    border-radius: 10px; box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+    opacity: 0; transform: translateY(5px);
+    animation: fadeIn .3s ease forwards;
+  }
+  @keyframes fadeIn {
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .msg { font-weight: 600; }
+  .time { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .kofi { border-left-color: var(--kofi); }
+  .twitch_follow { border-left-color: var(--twitch); }
+  .twitch_sub { border-left-color: var(--sub); }
+  .twitch_gift { border-left-color: var(--gift); }
+  .twitch_bits { border-left-color: var(--bits); }
+  .twitch_points { border-left-color: var(--points); }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🎧 Soundwave1111 Live Activity Feed</h1>
+    <div id="status">Verbinde…</div>
+  </header>
+  <div id="feed"></div>
+<script>
+const feed = document.getElementById("feed");
+const statusEl = document.getElementById("status");
+
+function fmtTime(ts) {
+  return new Date(ts).toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" });
+}
+
+function addEntry(e) {
+  const div = document.createElement("div");
+  div.className = "entry " + e.type;
+  div.innerHTML = \`
+    <div class="msg">\${e.message}</div>
+    <div class="time">\${fmtTime(e.time)}</div>\`;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+  if (feed.children.length > 200) feed.removeChild(feed.firstChild);
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onopen = () => statusEl.textContent = "Live verbunden";
+  es.onerror = () => statusEl.textContent = "Verbindung getrennt…";
+  es.onmessage = ev => {
+    try { addEntry(JSON.parse(ev.data)); } catch {}
+  };
+}
+connect();
+</script>
+</body>
+</html>
+  `);
+});
+
+// ====== Healthcheck ======
+app.get("/", (_, res) => res.send("Soundwave Ko-fi & Twitch Webhook läuft!"));
+
+// ====== Start Server ======
+app.listen(PORT, () => console.log("🚀 Server läuft auf Port", PORT));
