@@ -3,21 +3,26 @@ import bodyParser from "body-parser";
 import fetch from "node-fetch";
 
 const app = express();
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-const STREAMERBOT_URL = "http://192.168.178.25:8080/ExecuteCode"; // anpassen falls nötig
+const STREAMERBOT_URL = "http://192.168.178.25:8080/ExecuteCode";
+const KOFI_TOKEN = "8724041a-c3b4-4683-b309-8e08591552e2"; // dein Token
 
-// einfache Status-Seite
 app.get("/", (req, res) => {
   res.send("✅ Soundwave Ko-fi Webhook läuft!");
 });
 
-// Webhook-Endpoint
 app.post("/kofi", async (req, res) => {
   try {
-    console.log("📩 Anfrage empfangen:", req.body);
-
     const data = req.body;
+    console.log("📩 Anfrage empfangen:", data);
+
+    // optional prüfen, ob Token übereinstimmt
+    if (data.verification_token !== KOFI_TOKEN) {
+      console.warn("⚠️ Ungültiger Verification Token:", data.verification_token);
+      return res.sendStatus(403);
+    }
 
     if (data?.type === "Donation") {
       const donor = data.data.from_name;
