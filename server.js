@@ -12,7 +12,7 @@ let activityFeed = [];
 
 // === Basis-Check ===
 app.get("/", (req, res) => {
-  res.send("✅ Soundwave / McHobi74 Activity Webhook läuft!");
+  res.send("✅ McHobi74 Activity Webhook läuft!");
 });
 
 // === Ko-fi Webhook ===
@@ -92,7 +92,7 @@ app.get("/feed", (req, res) => {
   <head>
     <meta charset="utf-8">
     <meta http-equiv="refresh" content="10">
-    <title>Soundwave / McHobi74 Activity Feed</title>
+    <title> McHobi74 Activity Feed</title>
     <style>
       body { background:#0d1117; color:#e6edf3; font-family:'Segoe UI', sans-serif; margin:20px; }
       h1 { color:#58a6ff; margin-bottom:15px; }
@@ -109,7 +109,7 @@ app.get("/feed", (req, res) => {
     </style>
   </head>
   <body>
-    <h1>🩵 Soundwave / McHobi74 Activity Feed</h1>
+    <h1>🩵 McHobi74 Activity Feed</h1>
     ${
       activityFeed.length
         ? activityFeed
