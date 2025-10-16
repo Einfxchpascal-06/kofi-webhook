@@ -10,7 +10,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const KOFI_TOKEN = "8724041a-c3b4-4683-b309-8e08591552e2";
 const TWITCH_CLIENT_ID = process.env.gq5rg8kg7xe6d941t7rigjsz9qb1c2;
 const TWITCH_CLIENT_SECRET = process.env.dem6uszeu98gnaqbbix2gdlaci1hgy;
-const TWITCH_USER = process.env.McHobi74 || "McHobi74";
+const TWITCH_USER = process.env.TWITCH_USER || "McHobi74";
 let TWITCH_ACCESS_TOKEN = "";
 
 // === Speicher ===
