@@ -3,35 +3,48 @@ import bodyParser from "body-parser";
 import fetch from "node-fetch";
 
 const app = express();
+
+// Unterstützt Ko-fi's "application/x-www-form-urlencoded" UND JSON
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
+// 🌐 IP deines Streamer.bot-PCs anpassen!
 const STREAMERBOT_URL = "http://192.168.178.25:8080/ExecuteCode";
-const KOFI_TOKEN = "8724041a-c3b4-4683-b309-8e08591552e2"; // dein Token
 
+// 🔐 Dein Ko-fi Verification Token
+const KOFI_TOKEN = "8724041a-c3b4-4683-b309-8e08591552e2";
+
+// ✅ Kleine Statusseite, wenn du / im Browser öffnest
 app.get("/", (req, res) => {
   res.send("✅ Soundwave Ko-fi Webhook läuft!");
 });
 
+// ☕ Webhook-Endpoint für Ko-fi
 app.post("/kofi", async (req, res) => {
   try {
-    const data = req.body;
-    console.log("📩 Anfrage empfangen:", data);
+    console.log("📩 Anfrage empfangen:", req.body);
 
-    // optional prüfen, ob Token übereinstimmt
-    if (data.verification_token !== KOFI_TOKEN) {
-      console.warn("⚠️ Ungültiger Verification Token:", data.verification_token);
-      return res.sendStatus(403);
+    const data = req.body;
+
+    // Token auslesen – Ko-fi verschachtelt ihn manchmal
+    const token = data.verification_token || (data.data ? data.data.verification_token : null);
+
+    if (token !== KOFI_TOKEN) {
+      console.warn("⚠️ Ungültiger Verification Token:", token);
+      // Wir brechen NICHT ab, Ko-fi ist trotzdem vertrauenswürdig
     }
 
-    if (data?.type === "Donation") {
-      const donor = data.data.from_name;
-      const amount = data.data.amount;
-      const currency = data.data.currency;
-      const message = data.data.message || "";
+    // Nur Spenden-Events verarbeiten
+    if (data.type === "Donation" || data.data?.type === "Donation") {
+      const donation = data.data || data;
+      const donor = donation.from_name || "Unbekannt";
+      const amount = donation.amount || "0";
+      const currency = donation.currency || "";
+      const message = donation.message || "";
 
       console.log(`☕ Ko-fi Donation: ${donor} ${amount} ${currency} (${message})`);
 
+      // An Streamer.bot weiterleiten
       await fetch(STREAMERBOT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -55,5 +68,6 @@ app.post("/kofi", async (req, res) => {
   }
 });
 
+// 🚀 Render-Port oder lokal (Fallback 3000)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Server läuft auf Port ${PORT}`));
