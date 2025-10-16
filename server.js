@@ -5,19 +5,28 @@ import fetch from "node-fetch";
 const app = express();
 app.use(bodyParser.json());
 
-// 🔧 IP-Adresse deines Streamer.bot-PCs anpassen!
-const STREAMERBOT_URL = "http://192.168.178.25:8080/ExecuteCode";
+const STREAMERBOT_URL = "http://192.168.178.25:8080/ExecuteCode"; // anpassen falls nötig
 
+// einfache Status-Seite
+app.get("/", (req, res) => {
+  res.send("✅ Soundwave Ko-fi Webhook läuft!");
+});
+
+// Webhook-Endpoint
 app.post("/kofi", async (req, res) => {
-  const data = req.body;
+  try {
+    console.log("📩 Anfrage empfangen:", req.body);
 
-  if (data && data.type === "Donation") {
-    const donor = data.data.from_name;
-    const amount = data.data.amount;
-    const currency = data.data.currency;
-    const message = data.data.message || "";
+    const data = req.body;
 
-    try {
+    if (data?.type === "Donation") {
+      const donor = data.data.from_name;
+      const amount = data.data.amount;
+      const currency = data.data.currency;
+      const message = data.data.message || "";
+
+      console.log(`☕ Ko-fi Donation: ${donor} ${amount} ${currency} (${message})`);
+
       await fetch(STREAMERBOT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -32,16 +41,14 @@ app.post("/kofi", async (req, res) => {
           `,
         }),
       });
-      console.log(`☕ Ko-fi Donation: ${donor} ${amount} ${currency}`);
-    } catch (err) {
-      console.error("❌ Fehler beim Senden an Streamer.bot:", err);
     }
-  }
 
-  res.sendStatus(200);
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("❌ Fehler beim Verarbeiten:", err);
+    res.sendStatus(500);
+  }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`✅ Ko-fi Webhook Bridge läuft auf Port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`✅ Server läuft auf Port ${PORT}`));
