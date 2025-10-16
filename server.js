@@ -4,143 +4,161 @@ import fetch from "node-fetch";
 
 const app = express();
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
 
-// === ENV ===
-const KOFI_TOKEN = "8724041a-c3b4-4683-b309-8e08591552e2";
+// 🟢 Twitch Konfiguration
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER || "McHobi74";
-let TWITCH_ACCESS_TOKEN = "";
+const KO_FI_TOKEN = process.env.KO_FI_TOKEN || "8724041a-c3b4-4683-b309-8e08591552e2";
 
-// === Speicher ===
-let activityFeed = [];
+let feedEntries = [];
 
-// === Hilfsfunktionen ===
-async function getTwitchToken() {
-  const res = await fetch(
-    `https://id.twitch.tv/oauth2/token?client_id=${TWITCH_CLIENT_ID}&client_secret=${TWITCH_CLIENT_SECRET}&grant_type=client_credentials`,
-    { method: "POST" }
-  );
-  const data = await res.json();
-  TWITCH_ACCESS_TOKEN = data.access_token;
-  console.log("🔑 Twitch Token erneuert.");
-}
-
-// === Twitch-Webhook ===
-app.post("/twitch", async (req, res) => {
-  try {
-    const type = req.body.subscription?.type || req.body.type;
-    const e = req.body.event || {};
-    let color = "#7c3aed", icon = "🎉", title = type;
-    let message = "";
-
-    if (type.includes("follow")) { color="#00ffcc"; icon="💚"; title="Follow"; }
-    if (type.includes("subscribe")) {
-      const tierMap = { "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3" };
-      const tier = tierMap[e.tier] || "Tier ?";
-      if (type.includes("gift")) {
-        color="#eab308"; icon="🎁"; title="Sub Gift";
-        message = `${e.user_name} verschenkte ${e.total ?? 1} Subs (${tier})`;
-      } else {
-        color="#eab308"; icon="⭐"; title="Sub";
-        message = `${e.user_name} (${tier})`;
-      }
-    }
-    if (type.includes("cheer")) {
-      color="#ff9800"; icon="💎"; title="Bits";
-      message = `${e.user_name} cheerte ${e.bits} Bits – „${e.message ?? ""}“`;
-    }
-    if (type.includes("channel.channel_points_custom_reward_redemption")) {
-      color="#ff66cc"; icon="🎯"; title="Channel Points";
-      message = `${e.user_name}: ${e.reward?.title ?? ""}`;
-    }
-
-    activityFeed.unshift({
-      type: title,
-      donor: e.user_name || e.user_login || "Unbekannt",
-      amount: "",
-      currency: "",
-      message,
-      color,
-      icon,
-      time: new Date().toLocaleString("de-DE"),
-    });
-    if (activityFeed.length > 100) activityFeed.pop();
-
-    console.log(`💜 Twitch ${title}: ${message}`);
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("❌ Twitch Fehler:", err);
-    res.sendStatus(500);
-  }
+// 💚 Testseite
+app.get("/", (req, res) => {
+  res.send("<h2>✅ Soundwave Ko-fi & Twitch Webhook läuft!</h2>");
 });
 
-
-// === Twitch-Callback-Verifizierung ===
-app.get("/twitch/callback", (req, res) => {
-  res.send("✅ Twitch EventSub Callback bestätigt.");
-});
-
-// === Ko-fi-Webhook ===
+// ☕ Ko-fi Webhook
 app.post("/kofi", (req, res) => {
-  try {
-    let data = req.body;
-    if (typeof data.data === "string") data = JSON.parse(data.data);
-    const token = data.verification_token || req.body.verification_token;
-    if (token !== KOFI_TOKEN) console.warn("⚠️ Ungültiger Token:", token);
+  const data = req.body;
 
-    if (data.type === "Donation") {
-      const donor = data.from_name || "Unbekannt";
-      const amount = data.amount || "0";
-      const currency = data.currency || "";
-      const message = data.message || "";
-
-      activityFeed.unshift({
-        type: "Ko-fi Donation", donor, amount, currency,
-        message, color: "#58a6ff", icon: "☕",
-        time: new Date().toLocaleString("de-DE")
-      });
-      if (activityFeed.length > 100) activityFeed.pop();
-      console.log(`☕ Ko-fi Donation: ${donor} ${amount} ${currency} (${message})`);
-    }
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("❌ Ko-fi Fehler:", err);
-    res.sendStatus(500);
+  if (!data.verification_token || data.verification_token !== KO_FI_TOKEN) {
+    console.log("❌ Ungültiger Ko-fi Verification Token:", data.verification_token);
+    return res.sendStatus(403);
   }
+
+  console.log("☕ Neue Ko-fi Donation:", data);
+
+  const message = `☕ ${data.from_name} spendete ${data.amount} ${data.currency} – "${data.message}"`;
+  feedEntries.unshift({ type: "kofi", message, time: new Date() });
+
+  res.sendStatus(200);
 });
 
-// === Feed-Seite ===
+// 💜 Twitch Webhook für EventSub
+app.post("/twitch", express.json({ type: "*/*" }), async (req, res) => {
+  const messageType = req.header("Twitch-Eventsub-Message-Type");
+  const event = req.body.event;
+
+  // Twitch-Verifizierung
+  if (messageType === "webhook_callback_verification") {
+    console.log("✅ Twitch Webhook bestätigt.");
+    return res.send(req.body.challenge);
+  }
+
+  // Twitch-Benachrichtigungen
+  if (messageType === "notification") {
+    const type = req.body.subscription.type;
+
+    switch (type) {
+      case "channel.follow": {
+        const message = `🟣 Follow: ${event.user_name}`;
+        console.log(message);
+        feedEntries.unshift({ type: "twitch_follow", message, time: new Date() });
+        break;
+      }
+
+      case "channel.subscribe": {
+        const tier =
+          event.tier === "1000"
+            ? "Tier 1"
+            : event.tier === "2000"
+            ? "Tier 2"
+            : event.tier === "3000"
+            ? "Tier 3"
+            : "Unbekannt";
+        const duration = event.duration_months || 1;
+        const totalMonths = event.cumulative_months || 1;
+        const message = `💜 Sub: ${event.user_name} (${tier} – ${duration} Monat(e) im Voraus, insgesamt ${totalMonths} Monat(e))`;
+        console.log(message);
+        feedEntries.unshift({ type: "twitch_sub", message, time: new Date() });
+        break;
+      }
+
+      case "channel.subscription.gift": {
+        const gifter = event.user_name || "Anonym";
+        const recipient = event.recipient_user_name || "Unbekannt";
+        const tier =
+          event.tier === "1000"
+            ? "Tier 1"
+            : event.tier === "2000"
+            ? "Tier 2"
+            : event.tier === "3000"
+            ? "Tier 3"
+            : "Unbekannt";
+        const message = `🎁 Gift Sub: ${gifter} → ${recipient} (${tier})`;
+        console.log(message);
+        feedEntries.unshift({ type: "twitch_gift", message, time: new Date() });
+        break;
+      }
+
+      case "channel.cheer": {
+        const message = `💎 Bits: ${event.user_name} hat ${event.bits} Bits gesendet!`;
+        console.log(message);
+        feedEntries.unshift({ type: "twitch_bits", message, time: new Date() });
+        break;
+      }
+
+      case "channel.channel_points_custom_reward_redemption.add": {
+        const message = `🎯 Channel Points: ${event.user_name} löste "${event.reward.title}" ein!`;
+        console.log(message);
+        feedEntries.unshift({ type: "twitch_points", message, time: new Date() });
+        break;
+      }
+
+      default:
+        console.log("📨 Unbekannter Twitch-Event-Typ:", type);
+        break;
+    }
+  }
+
+  res.sendStatus(200);
+});
+
+// 🖥️ Feed-Anzeige
 app.get("/feed", (req, res) => {
   const html = `
-  <html><head><meta charset="utf-8"><meta http-equiv="refresh" content="10">
-  <title>Soundwave / McHobi74 Feed</title>
-  <style>
-    body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',sans-serif;margin:20px;}
-    h1{color:#58a6ff;}
-    .entry{margin-bottom:15px;padding:15px;border-radius:8px;background:#161b22;
-      box-shadow:0 2px 8px rgba(0,0,0,0.4);}
-    .time{color:#8b949e;font-size:0.85em;margin-bottom:5px;}
-  </style></head><body>
-  <h1>🩵 Soundwave / McHobi74 Activity Feed</h1>
-  ${
-    activityFeed.length
-      ? activityFeed.map(e=>`
-        <div class="entry" style="border-left:5px solid ${e.color};">
-          <div class="time">${e.time}</div>
-          <div>${e.icon} <b>${e.type}</b> — <b>${e.donor}</b> ${e.amount?("→ "+e.amount+" "+(e.currency||"")):""}</div>
-          <div>${e.message||""}</div>
-        </div>`).join("")
-      : "<p>Keine Einträge bisher.</p>"
-  }
-  </body></html>`;
+    <html>
+      <head>
+        <title>Soundwave Activity Feed</title>
+        <meta http-equiv="refresh" content="3">
+        <style>
+          body {
+            background-color: #0e0e10;
+            color: white;
+            font-family: Arial, sans-serif;
+            padding: 20px;
+          }
+          .entry {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 8px;
+          }
+          .kofi { background-color: #ff7f32; }
+          .twitch_follow { background-color: #9146ff; }
+          .twitch_sub { background-color: #6e46ff; }
+          .twitch_gift { background-color: #b57aff; }
+          .twitch_bits { background-color: #00c8ff; }
+          .twitch_points { background-color: #00ff95; }
+          small { color: #aaa; }
+        </style>
+      </head>
+      <body>
+        <h2>🎧 Soundwave1111 Activity Feed</h2>
+        ${feedEntries
+          .map(
+            (e) =>
+              `<div class="entry ${e.type}">
+                <b>${e.message}</b><br><small>${new Date(e.time).toLocaleTimeString()}</small>
+              </div>`
+          )
+          .join("")}
+      </body>
+    </html>
+  `;
   res.send(html);
 });
 
-// === Startup ===
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`✅ Server läuft auf Port ${PORT}`);
-  await getTwitchToken();
-});
+// 🌍 Start
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => console.log(`✅ Server läuft auf Port ${PORT}`));
