@@ -34,7 +34,6 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // Sofort aktuelle Einträge senden
   for (const e of [...feedEntries].slice(0, 25).reverse()) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
@@ -98,7 +97,6 @@ app.post("/kofi", (req, res) => {
 
 // ==================== 🟣 TWITCH EVENTSUB ====================
 
-// Twitch-Signatur validieren (Schutz gegen Fake-Requests)
 function verifyTwitchSignature(req) {
   const msgId = req.header("Twitch-Eventsub-Message-Id");
   const timestamp = req.header("Twitch-Eventsub-Message-Timestamp");
@@ -113,19 +111,16 @@ function verifyTwitchSignature(req) {
 app.post("/twitch", (req, res) => {
   const msgType = req.header("Twitch-Eventsub-Message-Type");
 
-  // Verifizierung
   if (msgType === "webhook_callback_verification") {
     console.log("✅ Twitch Webhook bestätigt.");
     return res.status(200).send(req.body.challenge);
   }
 
-  // Sicherheitscheck
   if (!verifyTwitchSignature(req)) {
     console.log("⚠️ Ungültige Twitch-Signatur, Request verworfen.");
     return res.status(403).send("Invalid signature");
   }
 
-  // Event-Handling
   const event = req.body.event;
   const type = req.body.subscription?.type;
 
@@ -137,9 +132,17 @@ app.post("/twitch", (req, res) => {
         case "channel.follow":
           pushFeed({ type: "twitch_follow", message: `🟣 Follow: ${event.user_name}`, time: Date.now() });
           break;
+
         case "channel.subscribe":
-          pushFeed({ type: "twitch_sub", message: `💜 Sub: ${event.user_name}`, time: Date.now() });
+          pushFeed({
+            type: "twitch_sub",
+            message: event.message
+              ? `💜 Sub: ${event.user_name} – "${event.message.text}"`
+              : `💜 Sub: ${event.user_name}`,
+            time: Date.now(),
+          });
           break;
+
         case "channel.subscription.gift":
           pushFeed({
             type: "twitch_gift",
@@ -147,17 +150,30 @@ app.post("/twitch", (req, res) => {
             time: Date.now(),
           });
           break;
+
         case "channel.cheer":
           pushFeed({
             type: "twitch_bits",
-            message: `💎 Bits: ${event.user_name} sendet ${event.bits} Bits!`,
+            message: event.message
+              ? `💎 ${event.user_name} sendet ${event.bits} Bits – "${event.message.text}"`
+              : `💎 ${event.user_name} sendet ${event.bits} Bits!`,
             time: Date.now(),
           });
           break;
+
         case "channel.channel_points_custom_reward_redemption.add":
+  const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
+  pushFeed({
+    type: "twitch_points",
+    message: `🎯 ${event.user_name} löste "${event.reward.title}" ein!${input}`,
+    time: Date.now(),
+  });
+  break;
+
+        case "channel.raid":
           pushFeed({
-            type: "twitch_points",
-            message: `🎯 ${event.user_name} löste "${event.reward.title}" ein!`,
+            type: "twitch_raid",
+            message: `🚀 Raid von ${event.from_broadcaster_user_name} mit ${event.viewers} Zuschauern!`,
             time: Date.now(),
           });
           break;
@@ -184,20 +200,19 @@ async function registerTwitchEvents() {
     const appToken = tokenRes.data.access_token;
     console.log("✅ Twitch App Token erhalten.");
 
-    // Twitch-User-ID abrufen
     const userRes = await axios.get(`https://api.twitch.tv/helix/users?login=${TWITCH_USER}`, {
       headers: { Authorization: `Bearer ${appToken}`, "Client-Id": TWITCH_CLIENT_ID },
     });
     const userId = userRes.data.data[0].id;
     console.log("🆔 Twitch User-ID:", userId);
 
-    // Abos definieren
     const topics = [
       "channel.follow",
       "channel.subscribe",
       "channel.subscription.gift",
       "channel.cheer",
       "channel.channel_points_custom_reward_redemption.add",
+      "channel.raid",
     ];
 
     for (const type of topics) {
@@ -206,7 +221,9 @@ async function registerTwitchEvents() {
         {
           type,
           version: "1",
-          condition: { broadcaster_user_id: userId },
+          condition: type === "channel.raid"
+            ? { to_broadcaster_user_id: userId }
+            : { broadcaster_user_id: userId },
           transport: {
             method: "webhook",
             callback: `https://kofi-webhook-e87r.onrender.com/twitch`,
@@ -245,6 +262,7 @@ app.get("/feed", (req, res) => {
     --gift: #b57aff;
     --bits: #00c8ff;
     --points: #00ff95;
+    --raid: #ff3d8e;
     --kofi: #ff7f32;
     --accent: #18e0d0;
   }
@@ -275,6 +293,7 @@ app.get("/feed", (req, res) => {
   .twitch_gift { border-left-color: var(--gift); }
   .twitch_bits { border-left-color: var(--bits); }
   .twitch_points { border-left-color: var(--points); }
+  .twitch_raid { border-left-color: var(--raid); }
 </style>
 </head>
 <body>
