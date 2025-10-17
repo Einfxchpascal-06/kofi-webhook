@@ -11,7 +11,7 @@ const KOFI_VERIFICATION_TOKEN = "b1c80c22-ba70-4368-a35b-fcb517c562b6";
 
 // ===== Speicher für Feed =====
 let feedEntries = [];
-const sseClients = new Set();
+const sseClients = new Set(); 
 
 function pushFeed(entry) {
   feedEntries.unshift(entry);
