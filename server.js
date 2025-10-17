@@ -1,33 +1,67 @@
 import express from "express";
 import bodyParser from "body-parser";
+import cors from "cors";
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 🔐 Tokens & IDs
+const KOFI_VERIFICATION_TOKEN = "b1c80c22-ba70-4368-a35b-fcb517c562b6";
+const TWITCH_SECRET = "soundwave_secret_2025";
+const TWITCH_USER = "McHobi74";
+
+app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
-const TWITCH_SECRET = "soundwave_secret_2025";
-const KOFI_VERIFICATION_TOKEN = "b1c80c22-ba70-4368-a35b-fcb517c562b6";
+// ==================== 🟢 ACTIVITY FEED (SSE) ====================
 
-// ===== Feed =====
 let feedEntries = [];
-const sseClients = new Set();
+let clients = [];
 
+// Browser verbindet sich mit Feed
+app.get("/events", (req, res) => {
+  res.set({
+    "Cache-Control": "no-cache",
+    "Content-Type": "text/event-stream",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  // Sofort initial senden
+  for (const e of [...feedEntries].slice(0, 25).reverse()) {
+    res.write(`data: ${JSON.stringify(e)}\n\n`);
+  }
+
+  clients.push(res);
+  req.on("close", () => {
+    clients = clients.filter((c) => c !== res);
+  });
+});
+
+// 🫀 KeepAlive Ping (alle 55 Sekunden)
+setInterval(() => {
+  clients.forEach((res) =>
+    res.write(`event: ping\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`)
+  );
+}, 55000);
+
+// Funktion zum Einfügen neuer Feed-Einträge
 function pushFeed(entry) {
   feedEntries.unshift(entry);
   if (feedEntries.length > 200) feedEntries.pop();
   const payload = `data: ${JSON.stringify(entry)}\n\n`;
-  for (const res of sseClients) {
+  for (const res of clients) {
     try { res.write(payload); } catch {}
   }
 }
 
-// ===== Ko-fi Webhook =====
+// ==================== ☕ KO-FI WEBHOOK ====================
 app.post("/kofi", (req, res) => {
   let data = req.body;
   console.log("📩 Ko-fi Payload empfangen:", data);
 
-  // Prüfen, ob Ko-fi alles in "data" als String sendet
+  // Ko-fi schickt JSON manchmal als String im Feld "data"
   if (typeof data.data === "string") {
     try {
       data = JSON.parse(data.data);
@@ -37,7 +71,6 @@ app.post("/kofi", (req, res) => {
     }
   }
 
-  // Token extrahieren
   const token =
     data.verification_token ||
     data.verificationToken ||
@@ -68,7 +101,7 @@ app.post("/kofi", (req, res) => {
   }
 });
 
-// ===== Twitch Webhook =====
+// ==================== 🟣 TWITCH WEBHOOK ====================
 app.post("/twitch", (req, res) => {
   const msgType = req.header("Twitch-Eventsub-Message-Type");
   const body = req.body;
@@ -128,22 +161,7 @@ app.post("/twitch", (req, res) => {
   res.sendStatus(200);
 });
 
-// ===== SSE Stream für Feed =====
-app.get("/events", (req, res) => {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-  });
-  for (const e of [...feedEntries].slice(0, 25).reverse()) {
-    res.write(`data: ${JSON.stringify(e)}\n\n`);
-  }
-  sseClients.add(res);
-  req.on("close", () => sseClients.delete(res));
-});
-
-// ===== Feed HTML =====
+// ==================== 🌐 FRONTEND (Feed) ====================
 app.get("/feed", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
@@ -167,25 +185,20 @@ app.get("/feed", (req, res) => {
     --kofi: #ff7f32;
     --accent: #18e0d0;
   }
-  * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font-family: "Segoe UI", Roboto, sans-serif;
-    display: flex; flex-direction: column; height: 100vh;
   }
   header {
     padding: 12px 18px;
     background: rgba(20,20,25,0.85);
     border-bottom: 1px solid #222;
-    position: sticky; top: 0; backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
     display: flex; align-items: center; justify-content: space-between;
   }
-  header h1 { font-size: 18px; margin: 0; letter-spacing: .4px; }
+  header h1 { font-size: 18px; margin: 0; }
   #status { font-size: 13px; color: var(--muted); }
-  #feed {
-    flex: 1; overflow-y: auto; padding: 16px;
-    scroll-behavior: smooth;
-  }
+  #feed { padding: 16px; }
   .entry {
     background: var(--card);
     margin-bottom: 10px; padding: 10px 14px;
@@ -194,9 +207,7 @@ app.get("/feed", (req, res) => {
     opacity: 0; transform: translateY(5px);
     animation: fadeIn .3s ease forwards;
   }
-  @keyframes fadeIn {
-    to { opacity: 1; transform: translateY(0); }
-  }
+  @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
   .msg { font-weight: 600; }
   .time { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .kofi { border-left-color: var(--kofi); }
@@ -229,13 +240,12 @@ function addEntry(e) {
     <div class="time">\${fmtTime(e.time)}</div>\`;
   feed.appendChild(div);
   feed.scrollTop = feed.scrollHeight;
-  if (feed.children.length > 200) feed.removeChild(feed.firstChild);
 }
 
 function connect() {
   const es = new EventSource("/events");
-  es.onopen = () => statusEl.textContent = "Live verbunden";
-  es.onerror = () => statusEl.textContent = "Verbindung getrennt…";
+  es.onopen = () => statusEl.textContent = "🟢 Live verbunden";
+  es.onerror = () => statusEl.textContent = "🔴 Verbindung getrennt…";
   es.onmessage = ev => {
     try { addEntry(JSON.parse(ev.data)); } catch {}
   };
@@ -247,8 +257,8 @@ connect();
   `);
 });
 
-// ===== Root =====
+// ==================== ROOT ====================
 app.get("/", (_, res) => res.send("🚀 McHobi's Ko-fi & Twitch Feed läuft erfolgreich!"));
 
-// ===== Start Server =====
+// ==================== START ====================
 app.listen(PORT, () => console.log("🚀 Server läuft auf Port", PORT));
