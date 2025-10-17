@@ -1,6 +1,5 @@
 import express from "express";
 import bodyParser from "body-parser";
-import fetch from "node-fetch";
 
 const app = express();
 app.use(bodyParser.json());
@@ -9,30 +8,53 @@ const PORT = process.env.PORT || 3000;
 const TWITCH_SECRET = "soundwave_secret_2025";
 const KOFI_VERIFICATION_TOKEN = "b1c80c22-ba70-4368-a35b-fcb517c562b6";
 
-// ===== Speicher für Feed =====
+// ===== Feed =====
 let feedEntries = [];
-const sseClients = new Set(); 
+const sseClients = new Set();
 
 function pushFeed(entry) {
   feedEntries.unshift(entry);
   if (feedEntries.length > 200) feedEntries.pop();
-  const data = `data: ${JSON.stringify(entry)}\n\n`;
-  for (const client of sseClients) {
-    try { client.write(data); } catch {}
+  const payload = `data: ${JSON.stringify(entry)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch {}
   }
 }
 
 // ===== Ko-fi Webhook =====
 app.post("/kofi", (req, res) => {
   const data = req.body;
-  if (data.verification_token !== KOFI_VERIFICATION_TOKEN) {
-    console.log("❌ Ungültiger Ko-fi Token!");
+  console.log("📩 Ko-fi Payload empfangen:", data);
+
+  // Token aus allen möglichen Feldern prüfen
+  const token =
+    data.verification_token ||
+    data.data?.verification_token ||
+    data.verificationToken ||
+    data.data?.verificationToken;
+
+  if (token !== KOFI_VERIFICATION_TOKEN) {
+    console.log("❌ Ungültiger Ko-fi Token! Erhalten:", token);
     return res.status(403).send("invalid token");
   }
-  console.log("☕ Neue Ko-fi Donation:", data.from_name, data.amount, data.currency);
-  const message = `☕ ${data.from_name} spendete ${data.amount} ${data.currency} – "${data.message}"`;
-  pushFeed({ type: "kofi", message, time: Date.now() });
-  res.sendStatus(200);
+
+  try {
+    const name = data.from_name || data.data?.from_name || "Unbekannt";
+    const amount = data.amount || data.data?.amount || "?";
+    const currency = data.currency || data.data?.currency || "";
+    const message = data.message || data.data?.message || "";
+
+    console.log(`☕ Neue Ko-fi Donation: ${name} ${amount} ${currency} – "${message}"`);
+    pushFeed({
+      type: "kofi",
+      message: `☕ ${name} spendete ${amount} ${currency} – "${message}"`,
+      time: Date.now()
+    });
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("⚠️ Fehler beim Verarbeiten von Ko-fi:", err);
+    res.sendStatus(500);
+  }
 });
 
 // ===== Twitch Webhook =====
@@ -40,13 +62,11 @@ app.post("/twitch", (req, res) => {
   const msgType = req.header("Twitch-Eventsub-Message-Type");
   const body = req.body;
 
-  // Twitch Challenge bestätigen
   if (msgType === "webhook_callback_verification") {
     console.log("✅ Twitch Webhook bestätigt.");
     return res.status(200).send(body.challenge);
   }
 
-  // Events verarbeiten
   if (msgType === "notification") {
     const event = body.event;
     const type = body.subscription?.type;
@@ -80,18 +100,15 @@ app.post("/twitch", (req, res) => {
           time: Date.now()
         });
       } 
-else if (type === "channel.channel_points_custom_reward_redemption.add") {
-  let msg = `🎯 ${event.user_name} löste "${event.reward?.title || "Belohnung"}" ein!`;
-  if (event.user_input) {
-    msg += ` ✏️ "${event.user_input}"`;
-  }
-  pushFeed({
-    type: "twitch_points",
-    message: msg,
-    time: Date.now()
-  });
-}
-
+      else if (type === "channel.channel_points_custom_reward_redemption.add") {
+        let msg = `🎯 ${event.user_name} löste "${event.reward?.title || "Belohnung"}" ein!`;
+        if (event.user_input) msg += ` ✏️ "${event.user_input}"`;
+        pushFeed({
+          type: "twitch_points",
+          message: msg,
+          time: Date.now()
+        });
+      }
     } catch (err) {
       console.log("⚠️ Fehler bei Twitch-Event:", err);
     }
@@ -100,7 +117,7 @@ else if (type === "channel.channel_points_custom_reward_redemption.add") {
   res.sendStatus(200);
 });
 
-// ====== Server-Sent Events für Feed ======
+// ===== SSE Stream für Feed =====
 app.get("/events", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -108,17 +125,14 @@ app.get("/events", (req, res) => {
     Connection: "keep-alive",
     "Access-Control-Allow-Origin": "*",
   });
-
-  // Letzte 25 Einträge sofort senden
   for (const e of [...feedEntries].slice(0, 25).reverse()) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
-
   sseClients.add(res);
   req.on("close", () => sseClients.delete(res));
 });
 
-// ====== Schicker Feed unter /feed ======
+// ===== Feed HTML =====
 app.get("/feed", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
@@ -126,7 +140,7 @@ app.get("/feed", (req, res) => {
 <html lang="de">
 <head>
 <meta charset="utf-8" />
-<title>McHobi Activity Feed</title>
+<title>McHobi's Activity Feed</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
@@ -184,7 +198,7 @@ app.get("/feed", (req, res) => {
 </head>
 <body>
   <header>
-    <h1>🎧 McHobi74 Live Activity Feed</h1>
+    <h1>🎧 McHobi's Activity Feed</h1>
     <div id="status">Verbinde…</div>
   </header>
   <div id="feed"></div>
@@ -222,8 +236,8 @@ connect();
   `);
 });
 
-// ====== Healthcheck ======
-app.get("/", (_, res) => res.send("Soundwave Ko-fi & Twitch Webhook läuft!"));
+// ===== Root =====
+app.get("/", (_, res) => res.send("🚀 McHobi's Ko-fi & Twitch Feed läuft erfolgreich!"));
 
-// ====== Start Server ======
+// ===== Start Server =====
 app.listen(PORT, () => console.log("🚀 Server läuft auf Port", PORT));
