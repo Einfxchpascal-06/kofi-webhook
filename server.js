@@ -1,264 +1,111 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
+import axios from "axios";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// 🔐 Tokens & IDs
-const KOFI_VERIFICATION_TOKEN = "b1c80c22-ba70-4368-a35b-fcb517c562b6";
-const TWITCH_SECRET = "soundwave_secret_2025";
-const TWITCH_USER = "McHobi74";
+// === KONFIGURATION ===
+const KOFI_VERIFICATION_TOKEN = "b1c80c22-ba70-4368-a35b-fcb517c562b6"; // dein echter Ko-fi Token
+const TWITCH_SECRET = "soundwave_secret_2025"; // Twitch Eventsub Secret
+const BROADCASTER_ID = "465427941"; // Deine Twitch User ID
+const ACCESS_TOKEN = "m9i1a2as2l29winlen7ns7u06rgi7"; // dein App Access Token
+const CLIENT_ID = "gg5rg8kg7xe6d94lt7rigjsz9qblc2"; // dein Twitch Client ID
 
 app.use(cors());
+app.use(bodyParser.json({ limit: "5mb" }));
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
 
-// ==================== 🟢 ACTIVITY FEED (SSE) ====================
-
-let feedEntries = [];
-let clients = [];
-
-// Browser verbindet sich mit Feed
-app.get("/events", (req, res) => {
-  res.set({
-    "Cache-Control": "no-cache",
-    "Content-Type": "text/event-stream",
-    Connection: "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-  });
-
-  // Sofort initial senden
-  for (const e of [...feedEntries].slice(0, 25).reverse()) {
-    res.write(`data: ${JSON.stringify(e)}\n\n`);
-  }
-
-  clients.push(res);
-  req.on("close", () => {
-    clients = clients.filter((c) => c !== res);
-  });
+// === HEALTH CHECK (für UptimeRobot) ===
+app.get("/healthz", (req, res) => {
+  res.status(200).send("OK");
 });
 
-// 🫀 KeepAlive Ping (alle 55 Sekunden)
-setInterval(() => {
-  clients.forEach((res) =>
-    res.write(`event: ping\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`)
-  );
-}, 55000);
-
-// Funktion zum Einfügen neuer Feed-Einträge
-function pushFeed(entry) {
-  feedEntries.unshift(entry);
-  if (feedEntries.length > 200) feedEntries.pop();
-  const payload = `data: ${JSON.stringify(entry)}\n\n`;
-  for (const res of clients) {
-    try { res.write(payload); } catch {}
-  }
-}
-
-// ==================== ☕ KO-FI WEBHOOK ====================
+// === KO-FI WEBHOOK ===
 app.post("/kofi", (req, res) => {
-  let data = req.body;
-  console.log("📩 Ko-fi Payload empfangen:", data);
-
-  // Ko-fi schickt JSON manchmal als String im Feld "data"
-  if (typeof data.data === "string") {
-    try {
-      data = JSON.parse(data.data);
-      console.log("📦 Parsed Ko-fi data:", data);
-    } catch (e) {
-      console.log("⚠️ Fehler beim JSON-Parse:", e);
-    }
-  }
-
-  const token =
-    data.verification_token ||
-    data.verificationToken ||
-    data.data?.verification_token ||
-    data.data?.verificationToken;
-
-  if (token !== KOFI_VERIFICATION_TOKEN) {
-    console.log("❌ Ungültiger Ko-fi Token! Erhalten:", token);
-    return res.status(403).send("invalid token");
-  }
+  console.log("📩 Ko-fi Payload empfangen:", req.body);
 
   try {
-    const name = data.from_name || "Unbekannt";
-    const amount = data.amount || "?";
-    const currency = data.currency || "";
-    const message = data.message || "";
+    const data = JSON.parse(req.body.data || "{}");
 
-    console.log(`☕ Neue Ko-fi Donation: ${name} ${amount} ${currency} – "${message}"`);
-    pushFeed({
-      type: "kofi",
-      message: `☕ ${name} spendete ${amount} ${currency} – "${message}"`,
-      time: Date.now()
-    });
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("⚠️ Fehler beim Verarbeiten von Ko-fi:", err);
-    res.sendStatus(500);
-  }
-});
-
-// ==================== 🟣 TWITCH WEBHOOK ====================
-app.post("/twitch", (req, res) => {
-  const msgType = req.header("Twitch-Eventsub-Message-Type");
-  const body = req.body;
-
-  if (msgType === "webhook_callback_verification") {
-    console.log("✅ Twitch Webhook bestätigt.");
-    return res.status(200).send(body.challenge);
-  }
-
-  if (msgType === "notification") {
-    const event = body.event;
-    const type = body.subscription?.type;
-    console.log("🎯 Twitch Event:", type);
-
-    try {
-      if (type === "channel.follow") {
-        pushFeed({ type: "twitch_follow", message: `🟣 Follow: ${event.user_name}`, time: Date.now() });
-      } 
-      else if (type === "channel.subscribe") {
-        const tierMap = { "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3" };
-        const tier = tierMap[event.tier] || "Tier ?";
-        const months = event.cumulative_months || 1;
-        pushFeed({
-          type: "twitch_sub",
-          message: `💜 Sub: ${event.user_name} (${tier}, insgesamt ${months} Monate)`,
-          time: Date.now()
-        });
-      } 
-      else if (type === "channel.subscription.gift") {
-        pushFeed({
-          type: "twitch_gift",
-          message: `🎁 Gift Sub: ${event.user_name} → ${event.recipient_user_name}`,
-          time: Date.now()
-        });
-      } 
-      else if (type === "channel.cheer") {
-        pushFeed({
-          type: "twitch_bits",
-          message: `💎 Bits: ${event.user_name} hat ${event.bits} Bits gesendet!`,
-          time: Date.now()
-        });
-      } 
-      else if (type === "channel.channel_points_custom_reward_redemption.add") {
-        let msg = `🎯 ${event.user_name} löste "${event.reward?.title || "Belohnung"}" ein!`;
-        if (event.user_input) msg += ` ✏️ "${event.user_input}"`;
-        pushFeed({
-          type: "twitch_points",
-          message: msg,
-          time: Date.now()
-        });
-      }
-    } catch (err) {
-      console.log("⚠️ Fehler bei Twitch-Event:", err);
+    // Token-Prüfung
+    if (data.verification_token !== KOFI_VERIFICATION_TOKEN) {
+      console.log("❌ Ungültiger Ko-fi Token!");
+      return res.status(403).send("Invalid token");
     }
-  }
 
-  res.sendStatus(200);
+    console.log("✅ Parsed Ko-fi data:", data);
+    console.log(
+      `💖 Neue Ko-fi Donation: ${data.from_name} ${data.amount} ${data.currency} – "${data.message}"`
+    );
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("❌ Fehler beim Verarbeiten der Ko-fi Daten:", err);
+    res.status(500).send("Server error");
+  }
 });
 
-// ==================== 🌐 FRONTEND (Feed) ====================
-app.get("/feed", (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(`
-<!doctype html>
-<html lang="de">
-<head>
-<meta charset="utf-8" />
-<title>McHobi's Activity Feed</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-  :root {
-    --bg: #0e0e10;
-    --card: #15151a;
-    --text: #fff;
-    --muted: #a5a5b0;
-    --twitch: #9146ff;
-    --sub: #6e46ff;
-    --gift: #b57aff;
-    --bits: #00c8ff;
-    --points: #00ff95;
-    --kofi: #ff7f32;
-    --accent: #18e0d0;
-  }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: "Segoe UI", Roboto, sans-serif;
-  }
-  header {
-    padding: 12px 18px;
-    background: rgba(20,20,25,0.85);
-    border-bottom: 1px solid #222;
-    backdrop-filter: blur(8px);
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  header h1 { font-size: 18px; margin: 0; }
-  #status { font-size: 13px; color: var(--muted); }
-  #feed { padding: 16px; }
-  .entry {
-    background: var(--card);
-    margin-bottom: 10px; padding: 10px 14px;
-    border-left: 4px solid var(--accent);
-    border-radius: 10px; box-shadow: 0 3px 10px rgba(0,0,0,0.25);
-    opacity: 0; transform: translateY(5px);
-    animation: fadeIn .3s ease forwards;
-  }
-  @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
-  .msg { font-weight: 600; }
-  .time { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .kofi { border-left-color: var(--kofi); }
-  .twitch_follow { border-left-color: var(--twitch); }
-  .twitch_sub { border-left-color: var(--sub); }
-  .twitch_gift { border-left-color: var(--gift); }
-  .twitch_bits { border-left-color: var(--bits); }
-  .twitch_points { border-left-color: var(--points); }
-</style>
-</head>
-<body>
-  <header>
-    <h1>🎧 McHobi's Activity Feed</h1>
-    <div id="status">Verbinde…</div>
-  </header>
-  <div id="feed"></div>
-<script>
-const feed = document.getElementById("feed");
-const statusEl = document.getElementById("status");
+// === TWITCH EVENTSUB CALLBACK ===
+app.post("/twitch", (req, res) => {
+  const messageType = req.header("Twitch-Eventsub-Message-Type");
 
-function fmtTime(ts) {
-  return new Date(ts).toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" });
-}
+  if (messageType === "webhook_callback_verification") {
+    console.log("✅ Twitch Webhook bestätigt.");
+    return res.status(200).send(req.body.challenge);
+  }
 
-function addEntry(e) {
-  const div = document.createElement("div");
-  div.className = "entry " + e.type;
-  div.innerHTML = \`
-    <div class="msg">\${e.message}</div>
-    <div class="time">\${fmtTime(e.time)}</div>\`;
-  feed.appendChild(div);
-  feed.scrollTop = feed.scrollHeight;
-}
+  if (messageType === "notification") {
+    const event = req.body.event;
+    console.log(`🎯 Twitch Event: ${req.body.subscription.type}`, event);
 
-function connect() {
-  const es = new EventSource("/events");
-  es.onopen = () => statusEl.textContent = "🟢 Live verbunden";
-  es.onerror = () => statusEl.textContent = "🔴 Verbindung getrennt…";
-  es.onmessage = ev => {
-    try { addEntry(JSON.parse(ev.data)); } catch {}
-  };
-}
-connect();
-</script>
-</body>
-</html>
-  `);
+    switch (req.body.subscription.type) {
+      case "channel.subscribe":
+        console.log(
+          `💜 Neuer Sub von ${event.user_name} (${event.tier}) – ${event.is_gift ? "Gift" : "Normal"}`
+        );
+        break;
+      case "channel.cheer":
+        console.log(`🎉 ${event.user_name} hat ${event.bits} Bits gesendet!`);
+        break;
+      case "channel.channel_points_custom_reward_redemption.add":
+        console.log(
+          `🏆 Kanalpunkte: ${event.user_name} löst "${event.reward.title}" ein – ${event.user_input || "kein Text"}`
+        );
+        break;
+      case "channel.follow":
+        console.log(`👤 Neuer Follower: ${event.user_name}`);
+        break;
+      case "channel.hype_train.begin":
+        console.log("🚂 Hype Train gestartet!");
+        break;
+      default:
+        console.log("📢 Anderes Event:", req.body.subscription.type);
+    }
+
+    res.status(200).end();
+  } else {
+    res.status(200).end();
+  }
 });
 
-// ==================== ROOT ====================
-app.get("/", (_, res) => res.send("🚀 McHobi's Ko-fi & Twitch Feed läuft erfolgreich!"));
+// === ERROR HANDLER ===
+app.use((err, req, res, next) => {
+  console.error("💥 Serverfehler:", err);
+  res.status(500).send("Internal server error");
+});
 
-// ==================== START ====================
-app.listen(PORT, () => console.log("🚀 Server läuft auf Port", PORT));
+// === AUTO RECONNECT INTERVAL (gegen Render Timeouts) ===
+setInterval(async () => {
+  try {
+    await axios.get("https://kofi-webhook-e87r.onrender.com/healthz");
+    console.log("🟢 Render-Server aktiv gehalten");
+  } catch (e) {
+    console.log("⚠️ Render Reconnect Versuch...");
+  }
+}, 240000); // alle 4 Minuten
+
+// === SERVER START ===
+app.listen(PORT, () => {
+  console.log(`🚀 Server läuft auf Port ${PORT}`);
+});
