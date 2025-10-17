@@ -1,11 +1,13 @@
 // === McHobi Activity Feed Server ===
-// Vollständige Version: Twitch + Ko-fi + Feed + Autoping
+// Twitch + Ko-fi + Feed + Autoping + multipart Support
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import axios from "axios";
+import multer from "multer";
 
 const app = express();
+const upload = multer(); // für multipart/form-data
 const PORT = process.env.PORT || 10000;
 
 // === ENV VARIABLEN ===
@@ -23,30 +25,32 @@ app.use(bodyParser.urlencoded({ extended: true }));
 let events = [];
 
 // === HEALTHCHECK ===
-app.get("/healthz", (req, res) => {
-  res.status(200).send("OK");
-});
+app.get("/healthz", (req, res) => res.status(200).send("OK"));
 
-// === KO-FI WEBHOOK ===
-app.post("/kofi", express.text({ type: "*/*" }), (req, res) => {
+// === KO-FI WEBHOOK (kompatibel mit JSON, form-urlencoded, multipart) ===
+app.post("/kofi", upload.none(), async (req, res) => {
   try {
-    let dataRaw = req.body;
-    let data;
+    let data = {};
 
-    // Versuch 1: JSON
-    try {
-      data = JSON.parse(dataRaw);
-    } catch {
-      // Versuch 2: x-www-form-urlencoded
-      const params = new URLSearchParams(dataRaw);
-      data = Object.fromEntries(params.entries());
+    // 1️⃣ multipart/form-data
+    if (Object.keys(req.body || {}).length > 0 && req.body.verification_token) {
+      data = req.body;
+    }
+    // 2️⃣ JSON oder Text
+    else if (typeof req.body === "string") {
+      try {
+        data = JSON.parse(req.body);
+      } catch {
+        const params = new URLSearchParams(req.body);
+        data = Object.fromEntries(params.entries());
+      }
     }
 
     console.log("📦 Ko-fi Payload empfangen:", data);
 
     const receivedToken =
-      data?.verification_token || data?.["verification_token"];
-    const expectedToken = KO_FI_TOKEN?.trim();
+      data.verification_token || data["verification_token"];
+    const expectedToken = (KO_FI_TOKEN || "").trim();
 
     if (!receivedToken || receivedToken.trim() !== expectedToken) {
       console.log(`❌ Ungültiger Ko-fi Token! Erhalten: ${receivedToken}`);
@@ -130,6 +134,7 @@ app.get("/feed", (req, res) => {
   <head>
     <title>McHobi Activity Feed</title>
     <meta charset="utf-8" />
+    <meta http-equiv="refresh" content="10">
     <style>
       body {
         background: #0d1117;
@@ -174,7 +179,7 @@ app.get("/feed", (req, res) => {
   res.send(html);
 });
 
-// === AUTOPING, damit der Server wach bleibt ===
+// === AUTOPING ===
 const SELF_URL = "https://kofi-webhook-e87r.onrender.com/healthz";
 setInterval(async () => {
   try {
