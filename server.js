@@ -121,7 +121,7 @@ app.get("/feed", (req, res) => {
 <html lang="de">
 <head>
 <meta charset="utf-8" />
-<title>Soundwave Activity Feed</title>
+<title>McHobi Activity Feed</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
@@ -179,7 +179,7 @@ app.get("/feed", (req, res) => {
 </head>
 <body>
   <header>
-    <h1>🎧 Soundwave1111 Live Activity Feed</h1>
+    <h1>🎧 McHobi74 Live Activity Feed</h1>
     <div id="status">Verbinde…</div>
   </header>
   <div id="feed"></div>
