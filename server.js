@@ -25,21 +25,36 @@ app.get("/healthz", (req, res) => {
   res.status(200).send("OK");
 });
 
-// 🧩 KO-FI WEBHOOK
-app.post("/kofi", (req, res) => {
+// 🧩 KO-FI WEBHOOK (fix für alle Payload-Formate)
+app.post("/kofi", bodyParser.text({ type: "*/*" }), (req, res) => {
   try {
-    const data = req.body;
+    let data;
+
+    // Versuch, Ko-fi Body zu parsen
+    if (typeof req.body === "string") {
+      try {
+        data = JSON.parse(req.body);
+      } catch (e) {
+        const params = new URLSearchParams(req.body);
+        data = Object.fromEntries(params.entries());
+      }
+    } else {
+      data = req.body;
+    }
+
     console.log("📦 Ko-fi Payload empfangen:", data);
 
-    // Token prüfen
-    if (!data.verification_token || data.verification_token !== KO_FI_TOKEN) {
-      console.log("❌ Ungültiger Ko-fi Token!");
+    const receivedToken = data.verification_token || data["verification_token"];
+    const expectedToken = KO_FI_TOKEN;
+
+    if (!receivedToken || receivedToken.trim() !== expectedToken.trim()) {
+      console.log(`❌ Ungültiger Ko-fi Token! Erhalten: ${receivedToken}`);
       return res.status(403).send("Forbidden");
     }
 
     const donation = {
       platform: "Ko-fi",
-      from: data.from_name,
+      from: data.from_name || "Unbekannt",
       message: data.message || "Keine Nachricht",
       amount: `${data.amount} ${data.currency || "USD"}`,
       timestamp: new Date().toISOString(),
@@ -54,6 +69,8 @@ app.post("/kofi", (req, res) => {
     console.error("❌ Fehler im Ko-fi Webhook:", err);
     res.status(500).send("Error");
   }
+});
+
 });
 
 // 🧩 TWITCH EVENTS (Subs, Bits, etc.)
