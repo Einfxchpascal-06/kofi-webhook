@@ -1,111 +1,170 @@
 import express from "express";
-import bodyParser from "body-parser";
 import cors from "cors";
+import bodyParser from "body-parser";
 import axios from "axios";
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// === KONFIGURATION ===
-const KOFI_VERIFICATION_TOKEN = "b1c80c22-ba70-4368-a35b-fcb517c562b6"; // dein echter Ko-fi Token
-const TWITCH_SECRET = "soundwave_secret_2025"; // Twitch Eventsub Secret
-const BROADCASTER_ID = "465427941"; // Deine Twitch User ID
-const ACCESS_TOKEN = "m9i1a2as2l29winlen7ns7u06rgi7"; // dein App Access Token
-const CLIENT_ID = "gg5rg8kg7xe6d94lt7rigjsz9qblc2"; // dein Twitch Client ID
+// ✅ Umgebungsvariablen (Render → Environment)
+const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
+const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
+const TWITCH_USER = process.env.TWITCH_USER;
+const KO_FI_TOKEN = process.env.KO_FI_TOKEN;
 
+// ✅ Server Setup
 app.use(cors());
-app.use(bodyParser.json({ limit: "5mb" }));
+app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// === HEALTH CHECK (für UptimeRobot) ===
+// Speicher für Events
+let events = [];
+
+// 🧩 HEALTH CHECK (für Render & UptimeRobot)
 app.get("/healthz", (req, res) => {
   res.status(200).send("OK");
 });
 
-// === KO-FI WEBHOOK ===
+// 🧩 KO-FI WEBHOOK
 app.post("/kofi", (req, res) => {
-  console.log("📩 Ko-fi Payload empfangen:", req.body);
-
   try {
-    const data = JSON.parse(req.body.data || "{}");
+    const data = req.body;
+    console.log("📦 Ko-fi Payload empfangen:", data);
 
-    // Token-Prüfung
-    if (data.verification_token !== KOFI_VERIFICATION_TOKEN) {
+    // Token prüfen
+    if (!data.verification_token || data.verification_token !== KO_FI_TOKEN) {
       console.log("❌ Ungültiger Ko-fi Token!");
-      return res.status(403).send("Invalid token");
+      return res.status(403).send("Forbidden");
     }
 
-    console.log("✅ Parsed Ko-fi data:", data);
-    console.log(
-      `💖 Neue Ko-fi Donation: ${data.from_name} ${data.amount} ${data.currency} – "${data.message}"`
-    );
+    const donation = {
+      platform: "Ko-fi",
+      from: data.from_name,
+      message: data.message || "Keine Nachricht",
+      amount: `${data.amount} ${data.currency || "USD"}`,
+      timestamp: new Date().toISOString(),
+    };
+
+    events.unshift(donation);
+    if (events.length > 30) events.pop();
+
+    console.log(`✅ Neue Ko-fi Donation: ${donation.from} – ${donation.amount}`);
     res.status(200).send("OK");
   } catch (err) {
-    console.error("❌ Fehler beim Verarbeiten der Ko-fi Daten:", err);
-    res.status(500).send("Server error");
+    console.error("❌ Fehler im Ko-fi Webhook:", err);
+    res.status(500).send("Error");
   }
 });
 
-// === TWITCH EVENTSUB CALLBACK ===
+// 🧩 TWITCH EVENTS (Subs, Bits, etc.)
 app.post("/twitch", (req, res) => {
-  const messageType = req.header("Twitch-Eventsub-Message-Type");
-
-  if (messageType === "webhook_callback_verification") {
-    console.log("✅ Twitch Webhook bestätigt.");
-    return res.status(200).send(req.body.challenge);
-  }
-
-  if (messageType === "notification") {
+  try {
     const event = req.body.event;
-    console.log(`🎯 Twitch Event: ${req.body.subscription.type}`, event);
+    if (!event) return res.status(200).send("No event");
 
-    switch (req.body.subscription.type) {
+    let msg = null;
+
+    switch (event.type) {
       case "channel.subscribe":
-        console.log(
-          `💜 Neuer Sub von ${event.user_name} (${event.tier}) – ${event.is_gift ? "Gift" : "Normal"}`
-        );
+        msg = {
+          platform: "Twitch",
+          from: event.user_name,
+          message: `Neues Abo (${event.tier || "Tier1"})`,
+          amount: "",
+          timestamp: new Date().toISOString(),
+        };
         break;
       case "channel.cheer":
-        console.log(`🎉 ${event.user_name} hat ${event.bits} Bits gesendet!`);
-        break;
-      case "channel.channel_points_custom_reward_redemption.add":
-        console.log(
-          `🏆 Kanalpunkte: ${event.user_name} löst "${event.reward.title}" ein – ${event.user_input || "kein Text"}`
-        );
+        msg = {
+          platform: "Twitch",
+          from: event.user_name,
+          message: `Cheer mit ${event.bits} Bits 🎉`,
+          amount: `${event.bits} Bits`,
+          timestamp: new Date().toISOString(),
+        };
         break;
       case "channel.follow":
-        console.log(`👤 Neuer Follower: ${event.user_name}`);
-        break;
-      case "channel.hype_train.begin":
-        console.log("🚂 Hype Train gestartet!");
+        msg = {
+          platform: "Twitch",
+          from: event.user_name,
+          message: "Neuer Follower 💜",
+          amount: "",
+          timestamp: new Date().toISOString(),
+        };
         break;
       default:
-        console.log("📢 Anderes Event:", req.body.subscription.type);
+        msg = {
+          platform: "Twitch",
+          from: "System",
+          message: `Unbekanntes Event: ${event.type}`,
+          amount: "",
+          timestamp: new Date().toISOString(),
+        };
     }
 
-    res.status(200).end();
-  } else {
-    res.status(200).end();
+    events.unshift(msg);
+    if (events.length > 30) events.pop();
+    console.log(`✅ Twitch Event: ${msg.message}`);
+
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("❌ Twitch Fehler:", err);
+    res.status(500).send("Error");
   }
 });
 
-// === ERROR HANDLER ===
-app.use((err, req, res, next) => {
-  console.error("💥 Serverfehler:", err);
-  res.status(500).send("Internal server error");
+// 🧩 FEED-SEITE
+app.get("/feed", (req, res) => {
+  const html = `
+    <html>
+      <head>
+        <title>McHobi Activity Feed</title>
+        <meta charset="utf-8" />
+        <style>
+          body {
+            background: #0d1117;
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            padding: 20px;
+          }
+          h1 { color: #00aaff; }
+          .event {
+            background: #161b22;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            box-shadow: 0 0 6px rgba(0,0,0,0.3);
+          }
+          .kofi { border-left: 4px solid #ff5f5f; }
+          .twitch { border-left: 4px solid #9146ff; }
+          .time {
+            font-size: 12px;
+            color: #999;
+          }
+        </style>
+      </head>
+      <body>
+        <h1>McHobi Activity Feed 💫</h1>
+        ${
+          events.length === 0
+            ? "<p>Noch keine Events eingegangen...</p>"
+            : events
+                .map(
+                  (e) => `
+              <div class="event ${e.platform.toLowerCase()}">
+                <strong>${e.platform}</strong> — ${e.from}<br/>
+                ${e.message} ${e.amount ? `(${e.amount})` : ""}
+                <div class="time">${new Date(e.timestamp).toLocaleString()}</div>
+              </div>`
+                )
+                .join("")
+        }
+      </body>
+    </html>`;
+  res.send(html);
 });
 
-// === AUTO RECONNECT INTERVAL (gegen Render Timeouts) ===
-setInterval(async () => {
-  try {
-    await axios.get("https://kofi-webhook-e87r.onrender.com/healthz");
-    console.log("🟢 Render-Server aktiv gehalten");
-  } catch (e) {
-    console.log("⚠️ Render Reconnect Versuch...");
-  }
-}, 240000); // alle 4 Minuten
-
-// === SERVER START ===
+// 🧩 START SERVER
 app.listen(PORT, () => {
   console.log(`🚀 Server läuft auf Port ${PORT}`);
 });
