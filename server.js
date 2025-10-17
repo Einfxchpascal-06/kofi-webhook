@@ -15,6 +15,7 @@ const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER;
 const KO_FI_TOKEN = process.env.KO_FI_TOKEN;
+console.log("🧩 KO_FI_TOKEN geladen:", KO_FI_TOKEN ? "✅ vorhanden" : "❌ fehlt!");
 
 // === BASIS SETUP ===
 app.use(cors());
