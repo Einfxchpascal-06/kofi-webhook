@@ -24,14 +24,24 @@ function pushFeed(entry) {
 
 // ===== Ko-fi Webhook =====
 app.post("/kofi", (req, res) => {
-  const data = req.body;
+  let data = req.body;
   console.log("📩 Ko-fi Payload empfangen:", data);
 
-  // Token aus allen möglichen Feldern prüfen
+  // Prüfen, ob Ko-fi alles in "data" als String sendet
+  if (typeof data.data === "string") {
+    try {
+      data = JSON.parse(data.data);
+      console.log("📦 Parsed Ko-fi data:", data);
+    } catch (e) {
+      console.log("⚠️ Fehler beim JSON-Parse:", e);
+    }
+  }
+
+  // Token extrahieren
   const token =
     data.verification_token ||
-    data.data?.verification_token ||
     data.verificationToken ||
+    data.data?.verification_token ||
     data.data?.verificationToken;
 
   if (token !== KOFI_VERIFICATION_TOKEN) {
@@ -40,10 +50,10 @@ app.post("/kofi", (req, res) => {
   }
 
   try {
-    const name = data.from_name || data.data?.from_name || "Unbekannt";
-    const amount = data.amount || data.data?.amount || "?";
-    const currency = data.currency || data.data?.currency || "";
-    const message = data.message || data.data?.message || "";
+    const name = data.from_name || "Unbekannt";
+    const amount = data.amount || "?";
+    const currency = data.currency || "";
+    const message = data.message || "";
 
     console.log(`☕ Neue Ko-fi Donation: ${name} ${amount} ${currency} – "${message}"`);
     pushFeed({
