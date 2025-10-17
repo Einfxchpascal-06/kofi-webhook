@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch + Ko-fi + Feed + Autoping + multipart Support
+// Twitch + Ko-fi + Feed + Autoping (100% kompatibel)
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
@@ -7,7 +7,7 @@ import axios from "axios";
 import multer from "multer";
 
 const app = express();
-const upload = multer(); // für multipart/form-data
+const upload = multer();
 const PORT = process.env.PORT || 10000;
 
 // === ENV VARIABLEN ===
@@ -21,22 +21,30 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// === EVENTSPEICHER ===
+// === EVENT-SPEICHER ===
 let events = [];
 
 // === HEALTHCHECK ===
 app.get("/healthz", (req, res) => res.status(200).send("OK"));
 
-// === KO-FI WEBHOOK (kompatibel mit JSON, form-urlencoded, multipart) ===
+// === KO-FI WEBHOOK (fix für form-urlencoded & eingebettetes JSON) ===
 app.post("/kofi", upload.none(), async (req, res) => {
   try {
     let data = {};
 
-    // 1️⃣ multipart/form-data
-    if (Object.keys(req.body || {}).length > 0 && req.body.verification_token) {
+    // Ko-fi sendet JSON verschachtelt im Feld "data"
+    if (req.body.data) {
+      try {
+        data = JSON.parse(req.body.data);
+      } catch {
+        data = req.body;
+      }
+    }
+    // Wenn direkt JSON gesendet wird
+    else if (req.body.verification_token) {
       data = req.body;
     }
-    // 2️⃣ JSON oder Text
+    // Wenn Text kommt
     else if (typeof req.body === "string") {
       try {
         data = JSON.parse(req.body);
