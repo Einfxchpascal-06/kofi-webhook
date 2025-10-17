@@ -80,13 +80,18 @@ app.post("/twitch", (req, res) => {
           time: Date.now()
         });
       } 
-      else if (type === "channel.channel_points_custom_reward_redemption.add") {
-        pushFeed({
-          type: "twitch_points",
-          message: `🎯 ${event.user_name} löste "${event.reward?.title || "Belohnung"}" ein!`,
-          time: Date.now()
-        });
-      }
+else if (type === "channel.channel_points_custom_reward_redemption.add") {
+  let msg = `🎯 ${event.user_name} löste "${event.reward?.title || "Belohnung"}" ein!`;
+  if (event.user_input) {
+    msg += ` ✏️ "${event.user_input}"`;
+  }
+  pushFeed({
+    type: "twitch_points",
+    message: msg,
+    time: Date.now()
+  });
+}
+
     } catch (err) {
       console.log("⚠️ Fehler bei Twitch-Event:", err);
     }
