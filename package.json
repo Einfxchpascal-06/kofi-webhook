@@ -1,17 +1,17 @@
 {
   "name": "kofi-webhook",
   "version": "1.0.0",
-  "description": "McHobi Activity Feed",
+  "description": "McHobi Twitch + Ko-fi Activity Feed",
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "postinstall": "npm install express axios cors body-parser"
+    "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.0",
-    "axios": "^1.7.0",
+    "axios": "^1.7.1",
+    "body-parser": "^1.20.2",
     "cors": "^2.8.5",
-    "body-parser": "^1.20.2"
+    "express": "^4.19.2",
+    "multer": "^1.4.5"
   }
 }
