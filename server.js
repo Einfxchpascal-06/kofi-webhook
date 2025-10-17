@@ -1,48 +1,54 @@
+// === McHobi Activity Feed Server ===
+// Vollständige Version: Twitch + Ko-fi + Feed + Autoping
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
+import axios from "axios";
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// ---- ENV VARS ----
+// === ENV VARIABLEN ===
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER;
 const KO_FI_TOKEN = process.env.KO_FI_TOKEN;
 
-// ---- BASIC SETUP ----
+// === BASIS SETUP ===
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Speicher für letzte Events
+// === EVENTSPEICHER ===
 let events = [];
 
-// ---- HEALTH CHECK ----
+// === HEALTHCHECK ===
 app.get("/healthz", (req, res) => {
   res.status(200).send("OK");
 });
 
-// ---- KO-FI WEBHOOK (robuste Version) ----
-app.post("/kofi", bodyParser.text({ type: "*/*" }), (req, res) => {
+// === KO-FI WEBHOOK ===
+app.post("/kofi", express.text({ type: "*/*" }), (req, res) => {
   try {
+    let dataRaw = req.body;
     let data;
-    if (typeof req.body === "string") {
-      try {
-        data = JSON.parse(req.body);
-      } catch (e) {
-        const params = new URLSearchParams(req.body);
-        data = Object.fromEntries(params.entries());
-      }
-    } else {
-      data = req.body;
+
+    // Versuch 1: JSON
+    try {
+      data = JSON.parse(dataRaw);
+    } catch {
+      // Versuch 2: x-www-form-urlencoded
+      const params = new URLSearchParams(dataRaw);
+      data = Object.fromEntries(params.entries());
     }
 
     console.log("📦 Ko-fi Payload empfangen:", data);
 
-    const receivedToken = data.verification_token || data["verification_token"];
-    if (!receivedToken || receivedToken.trim() !== KO_FI_TOKEN.trim()) {
+    const receivedToken =
+      data?.verification_token || data?.["verification_token"];
+    const expectedToken = KO_FI_TOKEN?.trim();
+
+    if (!receivedToken || receivedToken.trim() !== expectedToken) {
       console.log(`❌ Ungültiger Ko-fi Token! Erhalten: ${receivedToken}`);
       return res.status(403).send("Forbidden");
     }
@@ -66,7 +72,7 @@ app.post("/kofi", bodyParser.text({ type: "*/*" }), (req, res) => {
   }
 });
 
-// ---- TWITCH EVENTS ----
+// === TWITCH WEBHOOK ===
 app.post("/twitch", (req, res) => {
   try {
     const event = req.body.event;
@@ -117,7 +123,7 @@ app.post("/twitch", (req, res) => {
   }
 });
 
-// ---- FEED (Vorschau-Seite) ----
+// === FEED ===
 app.get("/feed", (req, res) => {
   const html = `
   <html>
@@ -168,7 +174,18 @@ app.get("/feed", (req, res) => {
   res.send(html);
 });
 
-// ---- START SERVER ----
+// === AUTOPING, damit der Server wach bleibt ===
+const SELF_URL = "https://kofi-webhook-e87r.onrender.com/healthz";
+setInterval(async () => {
+  try {
+    await axios.get(SELF_URL);
+    console.log("💤 Auto-Ping erfolgreich");
+  } catch {
+    console.log("⚠️ Auto-Ping fehlgeschlagen");
+  }
+}, 240000); // alle 4 Minuten
+
+// === START ===
 app.listen(PORT, () => {
   console.log(`🚀 Server läuft auf Port ${PORT}`);
 });
