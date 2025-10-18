@@ -34,7 +34,8 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  for (const e of [...feedEntries].slice(0, 25).reverse()) {
+  // Beim Verbindungsaufbau – nur die neuesten 25 Einträge senden (neuste oben)
+  for (const e of [...feedEntries].slice(0, 25)) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
 
@@ -55,6 +56,7 @@ function pushFeed(entry) {
   }
 }
 
+// Verbindung wach halten
 setInterval(() => {
   clients.forEach((res) =>
     res.write(`event: ping\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`)
@@ -161,14 +163,14 @@ app.post("/twitch", (req, res) => {
           });
           break;
 
-      case "channel.channel_points_custom_reward_redemption.add":
-  const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
-  pushFeed({
-    type: "twitch_points",
-    message: `🎯 ${event.user_name} löste "${event.reward.title}" ein!${input}`,
-    time: Date.now(),
-  });
-  break;
+        case "channel.channel_points_custom_reward_redemption.add":
+          const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
+          pushFeed({
+            type: "twitch_points",
+            message: `🎯 ${event.user_name} löste "${event.reward.title}" ein!${input}`,
+            time: Date.now(),
+          });
+          break;
 
         case "channel.raid":
           pushFeed({
@@ -276,15 +278,16 @@ app.get("/feed", (req, res) => {
   }
   header h1 { font-size: 18px; margin: 0; }
   #status { font-size: 13px; color: var(--muted); }
-  #feed { padding: 16px; display: flex; flex-direction: column; }
+  #feed { padding: 16px; display: flex; flex-direction: column-reverse; }
   .entry {
     background: var(--card);
     margin-bottom: 10px; padding: 10px 14px;
     border-left: 4px solid var(--accent);
     border-radius: 10px; box-shadow: 0 3px 10px rgba(0,0,0,0.25);
-    animation: fadeIn .3s ease forwards;
+    opacity: 0; transform: translateY(-5px) scale(0.98);
+    animation: fadeIn .35s ease forwards;
   }
-  @keyframes fadeIn { from {opacity:0;transform:translateY(8px)} to {opacity:1;transform:translateY(0)} }
+  @keyframes fadeIn { to { opacity: 1; transform: translateY(0) scale(1); } }
   .msg { font-weight: 600; }
   .time { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .kofi { border-left-color: var(--kofi); }
@@ -306,8 +309,29 @@ app.get("/feed", (req, res) => {
 const feed = document.getElementById("feed");
 const statusEl = document.getElementById("status");
 function fmtTime(ts){return new Date(ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});}
-function addEntry(e){const div=document.createElement("div");div.className="entry "+e.type;div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;feed.appendChild(div);feed.scrollTop=feed.scrollHeight;}
-function connect(){const es=new EventSource("/events");es.onopen=()=>statusEl.textContent="🟢 Live verbunden";es.onerror=()=>statusEl.textContent="🔴 Verbindung getrennt…";es.onmessage=ev=>{try{addEntry(JSON.parse(ev.data));}catch{}};}
+function addEntry(e){
+  const div=document.createElement("div");
+  div.className="entry "+e.type;
+  div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;
+  // neueste Nachricht oben
+  feed.prepend(div);
+  // sanfter Effekt
+  div.animate(
+    [
+      { transform: "translateY(-5px) scale(0.95)", opacity: 0 },
+      { transform: "translateY(0) scale(1)", opacity: 1 }
+    ],
+    { duration: 300, easing: "ease-out" }
+  );
+}
+function connect(){
+  const es=new EventSource("/events");
+  es.onopen=()=>statusEl.textContent="🟢 Live verbunden";
+  es.onerror=()=>statusEl.textContent="🔴 Verbindung getrennt…";
+  es.onmessage=ev=>{
+    try{addEntry(JSON.parse(ev.data));}catch{}
+  };
+}
 connect();
 </script>
 </body>
