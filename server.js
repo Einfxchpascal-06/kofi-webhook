@@ -1,5 +1,6 @@
 // === McHobi Activity Feed Server ===
 // Twitch (EventSub) + Ko-fi + Feed + Auto-Ping + Power-Ups ⚡ + Clear-Button 🧹
+// Neueste Events ganz oben 🔝
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -15,7 +16,7 @@ const KOFI_VERIFICATION_TOKEN = process.env.KO_FI_TOKEN;
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER;
-const TWITCH_SECRET = "soundwave_secret_2025"; // geheimer Schlüssel
+const TWITCH_SECRET = "soundwave_secret_2025";
 
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -34,7 +35,8 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  for (const e of feedEntries.slice(0, 25)) {
+  // Neueste zuerst
+  for (const e of feedEntries) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
 
@@ -45,11 +47,13 @@ app.get("/events", (req, res) => {
 });
 
 function pushFeed(entry) {
-  feedEntries.unshift(entry);
+  feedEntries.unshift(entry); // Neues Event ganz vorne
   if (feedEntries.length > 200) feedEntries.pop();
   const payload = `data: ${JSON.stringify(entry)}\n\n`;
   for (const res of clients) {
-    try { res.write(payload); } catch {}
+    try {
+      res.write(payload);
+    } catch {}
   }
 }
 
@@ -57,7 +61,9 @@ function pushFeed(entry) {
 app.post("/clear", (req, res) => {
   feedEntries = [];
   for (const c of clients) {
-    try { c.write(`event: clear\ndata: {}\n\n`); } catch {}
+    try {
+      c.write(`event: clear\ndata: {}\n\n`);
+    } catch {}
   }
   console.log("🧹 Feed wurde manuell geleert!");
   res.sendStatus(200);
@@ -73,7 +79,9 @@ setInterval(() => {
 app.post("/kofi", (req, res) => {
   let data = req.body;
   if (typeof data.data === "string") {
-    try { data = JSON.parse(data.data); } catch {}
+    try {
+      data = JSON.parse(data.data);
+    } catch {}
   }
 
   const token = data.verification_token || data.verificationToken;
@@ -176,7 +184,6 @@ app.post("/twitch", (req, res) => {
         });
         break;
 
-      // === ⚡ POWER-UPS ===
       case "channel.power_up":
         const user = event.user_name || "Unbekannt";
         const powerType = event.power_up_type || "Power-Up";
@@ -277,7 +284,7 @@ app.get("/feed", (req, res) => {
   display:flex;align-items:center;justify-content:space-between;}
   header h1{font-size:18px;margin:0;}
   #status{font-size:13px;color:var(--muted);}
-  #feed{padding:16px;display:flex;flex-direction:column-reverse;}
+  #feed{padding:16px;display:flex;flex-direction:column;}
   .entry{background:var(--card);margin-bottom:10px;padding:10px 14px;border-left:4px solid var(--accent);
   border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,0.25);animation:fadeIn .3s ease forwards;}
   @keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
@@ -314,7 +321,7 @@ function addEntry(e){
   const div=document.createElement("div");
   div.className="entry "+e.type;
   div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;
-  feed.prepend(div);
+  feed.insertBefore(div, feed.firstChild);
 }
 function clearFeed(){
   fetch("/clear",{method:"POST"}).then(()=>{feed.innerHTML="";});
