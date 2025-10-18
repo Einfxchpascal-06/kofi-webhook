@@ -15,7 +15,7 @@ const KOFI_VERIFICATION_TOKEN = process.env.KO_FI_TOKEN;
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER;
-const TWITCH_SECRET = "soundwave_secret_2025"; // eigener Signaturschlüssel
+const TWITCH_SECRET = "soundwave_secret_2025";
 
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -98,7 +98,6 @@ app.post("/kofi", (req, res) => {
 });
 
 // ==================== 🟣 TWITCH EVENTSUB ====================
-
 function verifyTwitchSignature(req) {
   const msgId = req.header("Twitch-Eventsub-Message-Id");
   const timestamp = req.header("Twitch-Eventsub-Message-Timestamp");
@@ -243,6 +242,18 @@ async function registerTwitchEvents() {
   }
 }
 
+// === 🧹 CLEAR FEED (NEU) ===
+app.post("/clear", (_, res) => {
+  feedEntries = [];
+  console.log("🧹 Feed geleert!");
+  pushFeed({
+    type: "system",
+    message: "🧹 Feed wurde geleert!",
+    time: Date.now(),
+  });
+  res.sendStatus(200);
+});
+
 // ==================== 🌐 FRONTEND (Feed) ====================
 app.get("/feed", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -278,6 +289,12 @@ app.get("/feed", (req, res) => {
   }
   header h1 { font-size: 18px; margin: 0; }
   #status { font-size: 13px; color: var(--muted); }
+  #clearBtn {
+    background: #ff4d4d; color: white; border: none;
+    padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    font-size: 13px; transition: background 0.2s;
+  }
+  #clearBtn:hover { background: #ff2d2d; }
   #feed { padding: 16px; display: flex; flex-direction: column; }
   .entry {
     background: var(--card);
@@ -288,10 +305,7 @@ app.get("/feed", (req, res) => {
     animation: fadeIn .35s ease forwards;
   }
   @keyframes fadeIn { to { opacity: 1; transform: translateY(0) scale(1); } }
-  .entry.glow {
-    box-shadow: 0 0 15px var(--accent);
-    animation: glowFade 1s ease-out forwards;
-  }
+  .entry.glow { box-shadow: 0 0 15px var(--accent); animation: glowFade 1s ease-out forwards; }
   @keyframes glowFade { from { box-shadow: 0 0 25px var(--accent); } to { box-shadow: 0 0 0 transparent; } }
   .msg { font-weight: 600; }
   .time { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -307,12 +321,26 @@ app.get("/feed", (req, res) => {
 <body>
   <header>
     <h1>🎧 McHobi's Activity Feed</h1>
-    <div id="status">Verbinde…</div>
+    <div>
+      <button id="clearBtn">🗑️ Feed leeren</button>
+      <span id="status">Verbinde…</span>
+    </div>
   </header>
   <div id="feed"></div>
 <script>
 const feed = document.getElementById("feed");
 const statusEl = document.getElementById("status");
+const clearBtn = document.getElementById("clearBtn");
+
+clearBtn.onclick = async () => {
+  await fetch("/clear", { method: "POST" });
+  feed.innerHTML = "";
+  const msg = document.createElement("div");
+  msg.className = "entry system";
+  msg.innerHTML = "<div class='msg'>🧹 Feed wurde geleert!</div>";
+  feed.prepend(msg);
+};
+
 function fmtTime(ts){return new Date(ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});}
 function addEntry(e){
   const div=document.createElement("div");
