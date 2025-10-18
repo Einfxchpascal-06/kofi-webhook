@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch (EventSub) + Ko-fi + Feed + Autoping – Vollautomatisch 😎
+// Twitch (EventSub) + Ko-fi + Feed + Auto-Ping + Power-Ups ⚡ + Clear-Button 🧹
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -15,7 +15,7 @@ const KOFI_VERIFICATION_TOKEN = process.env.KO_FI_TOKEN;
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER;
-const TWITCH_SECRET = "soundwave_secret_2025";
+const TWITCH_SECRET = "soundwave_secret_2025"; // geheimer Schlüssel
 
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -34,8 +34,7 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // Nur die neuesten 25 Einträge senden
-  for (const e of [...feedEntries].slice(0, 25)) {
+  for (const e of feedEntries.slice(0, 25)) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
 
@@ -50,13 +49,20 @@ function pushFeed(entry) {
   if (feedEntries.length > 200) feedEntries.pop();
   const payload = `data: ${JSON.stringify(entry)}\n\n`;
   for (const res of clients) {
-    try {
-      res.write(payload);
-    } catch {}
+    try { res.write(payload); } catch {}
   }
 }
 
-// Verbindung wach halten
+// ==================== 🧹 CLEAR FEED ====================
+app.post("/clear", (req, res) => {
+  feedEntries = [];
+  for (const c of clients) {
+    try { c.write(`event: clear\ndata: {}\n\n`); } catch {}
+  }
+  console.log("🧹 Feed wurde manuell geleert!");
+  res.sendStatus(200);
+});
+
 setInterval(() => {
   clients.forEach((res) =>
     res.write(`event: ping\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`)
@@ -67,17 +73,10 @@ setInterval(() => {
 app.post("/kofi", (req, res) => {
   let data = req.body;
   if (typeof data.data === "string") {
-    try {
-      data = JSON.parse(data.data);
-    } catch {}
+    try { data = JSON.parse(data.data); } catch {}
   }
 
-  const token =
-    data.verification_token ||
-    data.verificationToken ||
-    data.data?.verification_token ||
-    data.data?.verificationToken;
-
+  const token = data.verification_token || data.verificationToken;
   if (token !== KOFI_VERIFICATION_TOKEN) {
     console.log("❌ Ungültiger Ko-fi Token!");
     return res.status(403).send("invalid token");
@@ -124,64 +123,73 @@ app.post("/twitch", (req, res) => {
 
   const event = req.body.event;
   const type = req.body.subscription?.type;
+  if (msgType !== "notification") return res.sendStatus(200);
 
-  console.log("🎯 Twitch Event:", type, event);
+  try {
+    switch (type) {
+      case "channel.follow":
+        pushFeed({ type: "twitch_follow", message: `🟣 Follow: ${event.user_name}`, time: Date.now() });
+        break;
 
-  if (msgType === "notification") {
-    try {
-      switch (type) {
-        case "channel.follow":
-          pushFeed({ type: "twitch_follow", message: `🟣 Follow: ${event.user_name}`, time: Date.now() });
-          break;
+      case "channel.subscribe":
+        pushFeed({
+          type: "twitch_sub",
+          message: event.message
+            ? `💜 Sub: ${event.user_name} – "${event.message.text}"`
+            : `💜 Sub: ${event.user_name}`,
+          time: Date.now(),
+        });
+        break;
 
-        case "channel.subscribe":
-          pushFeed({
-            type: "twitch_sub",
-            message: event.message
-              ? `💜 Sub: ${event.user_name} – "${event.message.text}"`
-              : `💜 Sub: ${event.user_name}`,
-            time: Date.now(),
-          });
-          break;
+      case "channel.subscription.gift":
+        pushFeed({
+          type: "twitch_gift",
+          message: `🎁 Gift Sub: ${event.user_name} → ${event.recipient_user_name}`,
+          time: Date.now(),
+        });
+        break;
 
-        case "channel.subscription.gift":
-          pushFeed({
-            type: "twitch_gift",
-            message: `🎁 Gift Sub: ${event.user_name} → ${event.recipient_user_name}`,
-            time: Date.now(),
-          });
-          break;
+      case "channel.cheer":
+        pushFeed({
+          type: "twitch_bits",
+          message: event.message
+            ? `💎 ${event.user_name} sendete ${event.bits} Bits – "${event.message.text}"`
+            : `💎 ${event.user_name} sendete ${event.bits} Bits!`,
+          time: Date.now(),
+        });
+        break;
 
-        case "channel.cheer":
-          pushFeed({
-            type: "twitch_bits",
-            message: event.message
-              ? `💎 ${event.user_name} sendet ${event.bits} Bits – "${event.message.text}"`
-              : `💎 ${event.user_name} sendet ${event.bits} Bits!`,
-            time: Date.now(),
-          });
-          break;
+      case "channel.channel_points_custom_reward_redemption.add":
+        const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
+        pushFeed({
+          type: "twitch_points",
+          message: `🎯 ${event.user_name} löste "${event.reward.title}" ein!${input}`,
+          time: Date.now(),
+        });
+        break;
 
-        case "channel.channel_points_custom_reward_redemption.add":
-          const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
-          pushFeed({
-            type: "twitch_points",
-            message: `🎯 ${event.user_name} löste "${event.reward.title}" ein!${input}`,
-            time: Date.now(),
-          });
-          break;
+      case "channel.raid":
+        pushFeed({
+          type: "twitch_raid",
+          message: `🚀 Raid von ${event.from_broadcaster_user_name} mit ${event.viewers} Zuschauern!`,
+          time: Date.now(),
+        });
+        break;
 
-        case "channel.raid":
-          pushFeed({
-            type: "twitch_raid",
-            message: `🚀 Raid von ${event.from_broadcaster_user_name} mit ${event.viewers} Zuschauern!`,
-            time: Date.now(),
-          });
-          break;
-      }
-    } catch (err) {
-      console.log("⚠️ Fehler bei Twitch-Event:", err);
+      // === ⚡ POWER-UPS ===
+      case "channel.power_up":
+        const user = event.user_name || "Unbekannt";
+        const powerType = event.power_up_type || "Power-Up";
+        const bitsUsed = event.bits_used || event.bits || "?";
+        pushFeed({
+          type: "twitch_powerup",
+          message: `⚡ ${user} aktivierte "${powerType}" (${bitsUsed} Bits)`,
+          time: Date.now(),
+        });
+        break;
     }
+  } catch (err) {
+    console.log("⚠️ Fehler bei Twitch-Event:", err);
   }
 
   res.sendStatus(200);
@@ -214,6 +222,7 @@ async function registerTwitchEvents() {
       "channel.cheer",
       "channel.channel_points_custom_reward_redemption.add",
       "channel.raid",
+      "channel.power_up",
     ];
 
     for (const type of topics) {
@@ -232,7 +241,11 @@ async function registerTwitchEvents() {
           },
         },
         {
-          headers: { Authorization: `Bearer ${appToken}`, "Client-Id": TWITCH_CLIENT_ID, "Content-Type": "application/json" },
+          headers: {
+            Authorization: `Bearer ${appToken}`,
+            "Client-Id": TWITCH_CLIENT_ID,
+            "Content-Type": "application/json",
+          },
         }
       );
       console.log(`📡 Twitch EventSub "${type}" registriert.`);
@@ -241,18 +254,6 @@ async function registerTwitchEvents() {
     console.error("❌ Fehler beim Twitch-EventSub-Setup:", err.response?.data || err.message);
   }
 }
-
-// === 🧹 CLEAR FEED (NEU) ===
-app.post("/clear", (_, res) => {
-  feedEntries = [];
-  console.log("🧹 Feed geleert!");
-  pushFeed({
-    type: "system",
-    message: "🧹 Feed wurde geleert!",
-    time: Date.now(),
-  });
-  res.sendStatus(200);
-});
 
 // ==================== 🌐 FRONTEND (Feed) ====================
 app.get("/feed", (req, res) => {
@@ -266,80 +267,47 @@ app.get("/feed", (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
-    --bg: #0e0e10;
-    --card: #15151a;
-    --text: #fff;
-    --muted: #a5a5b0;
-    --twitch: #9146ff;
-    --sub: #6e46ff;
-    --gift: #b57aff;
-    --bits: #00c8ff;
-    --points: #00ff95;
-    --raid: #ff3d8e;
-    --kofi: #ff7f32;
-    --accent: #18e0d0;
+    --bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#a5a5b0;
+    --twitch:#9146ff;--sub:#6e46ff;--gift:#b57aff;--bits:#00c8ff;
+    --points:#00ff95;--raid:#ff3d8e;--powerup:#ffd700;--kofi:#ff7f32;
+    --accent:#18e0d0;
   }
-  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", Roboto, sans-serif; }
-  header {
-    padding: 12px 18px;
-    background: rgba(20,20,25,0.85);
-    border-bottom: 1px solid #222;
-    backdrop-filter: blur(8px);
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  header h1 { font-size: 18px; margin: 0; }
-  #status { font-size: 13px; color: var(--muted); }
-  #clearBtn {
-    background: #ff4d4d; color: white; border: none;
-    padding: 6px 10px; border-radius: 6px; cursor: pointer;
-    font-size: 13px; transition: background 0.2s;
-  }
-  #clearBtn:hover { background: #ff2d2d; }
-  #feed { padding: 16px; display: flex; flex-direction: column; }
-  .entry {
-    background: var(--card);
-    margin-bottom: 10px; padding: 10px 14px;
-    border-left: 4px solid var(--accent);
-    border-radius: 10px; box-shadow: 0 3px 10px rgba(0,0,0,0.25);
-    opacity: 0; transform: translateY(-5px) scale(0.98);
-    animation: fadeIn .35s ease forwards;
-  }
-  @keyframes fadeIn { to { opacity: 1; transform: translateY(0) scale(1); } }
-  .entry.glow { box-shadow: 0 0 15px var(--accent); animation: glowFade 1s ease-out forwards; }
-  @keyframes glowFade { from { box-shadow: 0 0 25px var(--accent); } to { box-shadow: 0 0 0 transparent; } }
-  .msg { font-weight: 600; }
-  .time { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .kofi { border-left-color: var(--kofi); }
-  .twitch_follow { border-left-color: var(--twitch); }
-  .twitch_sub { border-left-color: var(--sub); }
-  .twitch_gift { border-left-color: var(--gift); }
-  .twitch_bits { border-left-color: var(--bits); }
-  .twitch_points { border-left-color: var(--points); }
-  .twitch_raid { border-left-color: var(--raid); }
+  body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Roboto,sans-serif;}
+  header{padding:12px 18px;background:rgba(20,20,25,0.85);border-bottom:1px solid #222;
+  display:flex;align-items:center;justify-content:space-between;}
+  header h1{font-size:18px;margin:0;}
+  #status{font-size:13px;color:var(--muted);}
+  #feed{padding:16px;display:flex;flex-direction:column-reverse;}
+  .entry{background:var(--card);margin-bottom:10px;padding:10px 14px;border-left:4px solid var(--accent);
+  border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,0.25);animation:fadeIn .3s ease forwards;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+  .msg{font-weight:600;}
+  .time{font-size:12px;color:var(--muted);margin-top:2px;}
+  .kofi{border-left-color:var(--kofi);}
+  .twitch_follow{border-left-color:var(--twitch);}
+  .twitch_sub{border-left-color:var(--sub);}
+  .twitch_gift{border-left-color:var(--gift);}
+  .twitch_bits{border-left-color:var(--bits);}
+  .twitch_points{border-left-color:var(--points);}
+  .twitch_raid{border-left-color:var(--raid);}
+  .twitch_powerup{border-left-color:var(--powerup);}
+  button{background:var(--accent);color:#000;font-weight:600;border:none;padding:8px 14px;
+  border-radius:8px;cursor:pointer;transition:.2s;margin-right:10px;}
+  button:hover{filter:brightness(1.2);}
 </style>
 </head>
 <body>
   <header>
     <h1>🎧 McHobi's Activity Feed</h1>
     <div>
-      <button id="clearBtn">🗑️ Feed leeren</button>
+      <button onclick="clearFeed()">🧹 Alles löschen</button>
       <span id="status">Verbinde…</span>
     </div>
   </header>
   <div id="feed"></div>
 <script>
-const feed = document.getElementById("feed");
-const statusEl = document.getElementById("status");
-const clearBtn = document.getElementById("clearBtn");
-
-clearBtn.onclick = async () => {
-  await fetch("/clear", { method: "POST" });
-  feed.innerHTML = "";
-  const msg = document.createElement("div");
-  msg.className = "entry system";
-  msg.innerHTML = "<div class='msg'>🧹 Feed wurde geleert!</div>";
-  feed.prepend(msg);
-};
+const feed=document.getElementById("feed");
+const statusEl=document.getElementById("status");
 
 function fmtTime(ts){return new Date(ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});}
 function addEntry(e){
@@ -347,14 +315,21 @@ function addEntry(e){
   div.className="entry "+e.type;
   div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;
   feed.prepend(div);
-  div.classList.add("glow");
-  div.addEventListener("animationend",()=>div.classList.remove("glow"),{once:true});
+}
+function clearFeed(){
+  fetch("/clear",{method:"POST"}).then(()=>{feed.innerHTML="";});
 }
 function connect(){
   const es=new EventSource("/events");
   es.onopen=()=>statusEl.textContent="🟢 Live verbunden";
   es.onerror=()=>statusEl.textContent="🔴 Verbindung getrennt…";
-  es.onmessage=ev=>{try{addEntry(JSON.parse(ev.data));}catch{}};
+  es.onmessage=ev=>{
+    try{
+      const data=JSON.parse(ev.data);
+      addEntry(data);
+    }catch{}
+  };
+  es.addEventListener("clear",()=>{feed.innerHTML="";});
 }
 connect();
 </script>
