@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch + Ko-fi + Feed + Autoping
+// Twitch + Ko-fi + Feed + Autoping + SSE Stream
 
 import express from "express";
 import cors from "cors";
@@ -165,8 +165,6 @@ app.get("/feed", (req, res) => {
     --text: #fff;
     --muted: #a5a5b0;
     --twitch: #9146ff;
-    --sub: #6e46ff;
-    --gift: #b57aff;
     --bits: #00c8ff;
     --points: #00ff95;
     --kofi: #ff7f32;
@@ -263,6 +261,34 @@ connect();
 </body>
 </html>
   `);
+});
+
+// === LIVE EVENT STREAM (SSE) ===
+app.get("/events", (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+  });
+  res.flushHeaders();
+
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Initiale Events senden
+  events.slice(0, 15).forEach((e) => sendEvent(e));
+
+  // Hook, um neue Events live zu pushen
+  const originalUnshift = events.unshift.bind(events);
+  events.unshift = (item) => {
+    originalUnshift(item);
+    sendEvent(item);
+    if (events.length > 200) events.pop();
+    return events.length;
+  };
+
+  req.on("close", () => console.log("❌ Feed-Client getrennt"));
 });
 
 // === AUTOPING ===
