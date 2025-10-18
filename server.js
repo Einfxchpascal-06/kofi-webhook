@@ -34,7 +34,7 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // Beim Verbindungsaufbau – nur die neuesten 25 Einträge senden (neuste oben)
+  // Nur die neuesten 25 Einträge senden
   for (const e of [...feedEntries].slice(0, 25)) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
@@ -278,7 +278,7 @@ app.get("/feed", (req, res) => {
   }
   header h1 { font-size: 18px; margin: 0; }
   #status { font-size: 13px; color: var(--muted); }
-  #feed { padding: 16px; display: flex; flex-direction: column-reverse; }
+  #feed { padding: 16px; display: flex; flex-direction: column; }
   .entry {
     background: var(--card);
     margin-bottom: 10px; padding: 10px 14px;
@@ -288,6 +288,11 @@ app.get("/feed", (req, res) => {
     animation: fadeIn .35s ease forwards;
   }
   @keyframes fadeIn { to { opacity: 1; transform: translateY(0) scale(1); } }
+  .entry.glow {
+    box-shadow: 0 0 15px var(--accent);
+    animation: glowFade 1s ease-out forwards;
+  }
+  @keyframes glowFade { from { box-shadow: 0 0 25px var(--accent); } to { box-shadow: 0 0 0 transparent; } }
   .msg { font-weight: 600; }
   .time { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .kofi { border-left-color: var(--kofi); }
@@ -313,24 +318,15 @@ function addEntry(e){
   const div=document.createElement("div");
   div.className="entry "+e.type;
   div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;
-  // neueste Nachricht oben
   feed.prepend(div);
-  // sanfter Effekt
-  div.animate(
-    [
-      { transform: "translateY(-5px) scale(0.95)", opacity: 0 },
-      { transform: "translateY(0) scale(1)", opacity: 1 }
-    ],
-    { duration: 300, easing: "ease-out" }
-  );
+  div.classList.add("glow");
+  div.addEventListener("animationend",()=>div.classList.remove("glow"),{once:true});
 }
 function connect(){
   const es=new EventSource("/events");
   es.onopen=()=>statusEl.textContent="🟢 Live verbunden";
   es.onerror=()=>statusEl.textContent="🔴 Verbindung getrennt…";
-  es.onmessage=ev=>{
-    try{addEntry(JSON.parse(ev.data));}catch{}
-  };
+  es.onmessage=ev=>{try{addEntry(JSON.parse(ev.data));}catch{}};
 }
 connect();
 </script>
