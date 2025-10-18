@@ -84,15 +84,16 @@ app.post("/kofi", upload.none(), async (req, res) => {
 // === TWITCH WEBHOOK ===
 app.post("/twitch", (req, res) => {
   try {
-    const event = req.body.event;
-    if (!event) return res.status(200).send("No event");
+    const body = req.body;
+    const event = body.event || body;
+    const type = body.subscription?.type || event.type || "unknown";
 
     let msg;
-    switch (event.type) {
+    switch (type) {
       case "channel.subscribe":
         msg = {
           type: "twitch_sub",
-          message: `💜 Sub: ${event.user_name} (${
+          message: `💜 Sub: ${event.user_name || "Unbekannt"} (${
             event.tier || "Tier 1"
           })${event.message ? ` – "${event.message}"` : ""}`,
           time: Date.now(),
@@ -101,30 +102,34 @@ app.post("/twitch", (req, res) => {
       case "channel.cheer":
         msg = {
           type: "twitch_bits",
-          message: `💎 ${event.user_name} hat ${event.bits} Bits gesendet!${
-            event.message ? ` – "${event.message}"` : ""
-          }`,
+          message: `💎 ${event.user_name || "Unbekannt"} hat ${
+            event.bits || 0
+          } Bits gesendet!${event.message ? ` – "${event.message}"` : ""}`,
           time: Date.now(),
         };
         break;
       case "channel.follow":
         msg = {
           type: "twitch_follow",
-          message: `🟣 Neuer Follower: ${event.user_name}`,
+          message: `🟣 Neuer Follower: ${event.user_name || "Unbekannt"}`,
           time: Date.now(),
         };
         break;
       case "channel.raid":
         msg = {
           type: "twitch_raid",
-          message: `⚡ Raid von ${event.from_broadcaster_user_name} mit ${event.viewers} Zuschauern!`,
+          message: `⚡ Raid von ${
+            event.from_broadcaster_user_name || "Unbekannt"
+          } mit ${event.viewers || 0} Zuschauern!`,
           time: Date.now(),
         };
         break;
       case "channel.channel_points_custom_reward_redemption.add":
         msg = {
           type: "twitch_points",
-          message: `🎯 ${event.user_name} löste "${event.reward?.title || "Belohnung"}" ein!${
+          message: `🎯 ${event.user_name || "Unbekannt"} löste "${
+            event.reward?.title || "Belohnung"
+          }" ein!${
             event.user_input ? ` ✏️ "${event.user_input}"` : ""
           }`,
           time: Date.now(),
@@ -133,7 +138,7 @@ app.post("/twitch", (req, res) => {
       default:
         msg = {
           type: "twitch_other",
-          message: `📢 Unbekanntes Event: ${event.type}`,
+          message: `📢 Unbekanntes Event: ${type}`,
           time: Date.now(),
         };
     }
