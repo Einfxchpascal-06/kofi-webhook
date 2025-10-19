@@ -1,6 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch (EventSub) + Ko-fi + Feed + Auto-Ping + Power-Ups ⚡ + Clear-Button 🧹
-// Neueste Events ganz oben 🔝
+// Twitch (EventSub) + Ko-fi + Feed + Auto-Ping + Power-Ups + Clear-Fix 🔥
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -26,7 +25,7 @@ app.use(bodyParser.json());
 let feedEntries = [];
 let clients = [];
 
-// ==================== 🟢 ACTIVITY FEED (SSE) ====================
+// === SSE FEED ===
 app.get("/events", (req, res) => {
   res.set({
     "Cache-Control": "no-cache",
@@ -35,19 +34,16 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // Neueste zuerst
-  for (const e of feedEntries) {
-    res.write(`data: ${JSON.stringify(e)}\n\n`);
-  }
-
+  for (const e of feedEntries) res.write(`data: ${JSON.stringify(e)}\n\n`);
   clients.push(res);
+
   req.on("close", () => {
     clients = clients.filter((c) => c !== res);
   });
 });
 
 function pushFeed(entry) {
-  feedEntries.unshift(entry); // Neues Event ganz vorne
+  feedEntries.unshift(entry);
   if (feedEntries.length > 200) feedEntries.pop();
   const payload = `data: ${JSON.stringify(entry)}\n\n`;
   for (const res of clients) {
@@ -57,7 +53,7 @@ function pushFeed(entry) {
   }
 }
 
-// ==================== 🧹 CLEAR FEED ====================
+// === CLEAR ===
 app.post("/clear", (req, res) => {
   feedEntries = [];
   for (const c of clients) {
@@ -65,17 +61,18 @@ app.post("/clear", (req, res) => {
       c.write(`event: clear\ndata: {}\n\n`);
     } catch {}
   }
-  console.log("🧹 Feed wurde manuell geleert!");
+  console.log("🧹 Feed manuell geleert!");
   res.sendStatus(200);
 });
 
+// === AUTO PING ===
 setInterval(() => {
   clients.forEach((res) =>
     res.write(`event: ping\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`)
   );
 }, 55000);
 
-// ==================== ☕ KO-FI WEBHOOK ====================
+// === KO-FI ===
 app.post("/kofi", (req, res) => {
   let data = req.body;
   if (typeof data.data === "string") {
@@ -95,7 +92,6 @@ app.post("/kofi", (req, res) => {
   const currency = data.currency || "";
   const message = data.message || "";
 
-  console.log(`☕ Neue Ko-fi Donation: ${name} ${amount} ${currency} – "${message}"`);
   pushFeed({
     type: "kofi",
     message: `☕ ${name} spendete ${amount} ${currency} – "${message}"`,
@@ -104,7 +100,7 @@ app.post("/kofi", (req, res) => {
   res.sendStatus(200);
 });
 
-// ==================== 🟣 TWITCH EVENTSUB ====================
+// === TWITCH EVENTSUB ===
 function verifyTwitchSignature(req) {
   const msgId = req.header("Twitch-Eventsub-Message-Id");
   const timestamp = req.header("Twitch-Eventsub-Message-Timestamp");
@@ -119,13 +115,11 @@ function verifyTwitchSignature(req) {
 app.post("/twitch", (req, res) => {
   const msgType = req.header("Twitch-Eventsub-Message-Type");
 
-  if (msgType === "webhook_callback_verification") {
-    console.log("✅ Twitch Webhook bestätigt.");
+  if (msgType === "webhook_callback_verification")
     return res.status(200).send(req.body.challenge);
-  }
 
   if (!verifyTwitchSignature(req)) {
-    console.log("⚠️ Ungültige Twitch-Signatur, Request verworfen.");
+    console.log("⚠️ Ungültige Twitch-Signatur!");
     return res.status(403).send("Invalid signature");
   }
 
@@ -138,7 +132,6 @@ app.post("/twitch", (req, res) => {
       case "channel.follow":
         pushFeed({ type: "twitch_follow", message: `🟣 Follow: ${event.user_name}`, time: Date.now() });
         break;
-
       case "channel.subscribe":
         pushFeed({
           type: "twitch_sub",
@@ -148,7 +141,6 @@ app.post("/twitch", (req, res) => {
           time: Date.now(),
         });
         break;
-
       case "channel.subscription.gift":
         pushFeed({
           type: "twitch_gift",
@@ -156,7 +148,6 @@ app.post("/twitch", (req, res) => {
           time: Date.now(),
         });
         break;
-
       case "channel.cheer":
         pushFeed({
           type: "twitch_bits",
@@ -166,7 +157,6 @@ app.post("/twitch", (req, res) => {
           time: Date.now(),
         });
         break;
-
       case "channel.channel_points_custom_reward_redemption.add":
         const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
         pushFeed({
@@ -175,7 +165,6 @@ app.post("/twitch", (req, res) => {
           time: Date.now(),
         });
         break;
-
       case "channel.raid":
         pushFeed({
           type: "twitch_raid",
@@ -183,7 +172,6 @@ app.post("/twitch", (req, res) => {
           time: Date.now(),
         });
         break;
-
       case "channel.power_up":
         const user = event.user_name || "Unbekannt";
         const powerType = event.power_up_type || "Power-Up";
@@ -196,13 +184,13 @@ app.post("/twitch", (req, res) => {
         break;
     }
   } catch (err) {
-    console.log("⚠️ Fehler bei Twitch-Event:", err);
+    console.log("⚠️ Twitch-Fehler:", err);
   }
 
   res.sendStatus(200);
 });
 
-// === Twitch Auto-Subscribe beim Start ===
+// === TWITCH SUBS ===
 async function registerTwitchEvents() {
   try {
     const tokenRes = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -212,15 +200,11 @@ async function registerTwitchEvents() {
         grant_type: "client_credentials",
       },
     });
-
     const appToken = tokenRes.data.access_token;
-    console.log("✅ Twitch App Token erhalten.");
-
     const userRes = await axios.get(`https://api.twitch.tv/helix/users?login=${TWITCH_USER}`, {
       headers: { Authorization: `Bearer ${appToken}`, "Client-Id": TWITCH_CLIENT_ID },
     });
     const userId = userRes.data.data[0].id;
-    console.log("🆔 Twitch User-ID:", userId);
 
     const topics = [
       "channel.follow",
@@ -258,11 +242,11 @@ async function registerTwitchEvents() {
       console.log(`📡 Twitch EventSub "${type}" registriert.`);
     }
   } catch (err) {
-    console.error("❌ Fehler beim Twitch-EventSub-Setup:", err.response?.data || err.message);
+    console.error("❌ Twitch Setup Fehler:", err.response?.data || err.message);
   }
 }
 
-// ==================== 🌐 FRONTEND (Feed) ====================
+// === FRONTEND ===
 app.get("/feed", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`
@@ -315,6 +299,7 @@ app.get("/feed", (req, res) => {
 <script>
 const feed=document.getElementById("feed");
 const statusEl=document.getElementById("status");
+let es;
 
 function fmtTime(ts){return new Date(ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});}
 function addEntry(e){
@@ -324,19 +309,22 @@ function addEntry(e){
   feed.insertBefore(div, feed.firstChild);
 }
 function clearFeed(){
-  fetch("/clear",{method:"POST"}).then(()=>{feed.innerHTML="";});
+  fetch("/clear",{method:"POST"}).then(()=>{
+    feed.innerHTML="";
+  });
 }
 function connect(){
-  const es=new EventSource("/events");
+  es=new EventSource("/events");
   es.onopen=()=>statusEl.textContent="🟢 Live verbunden";
   es.onerror=()=>statusEl.textContent="🔴 Verbindung getrennt…";
   es.onmessage=ev=>{
-    try{
-      const data=JSON.parse(ev.data);
-      addEntry(data);
-    }catch{}
+    try{addEntry(JSON.parse(ev.data));}catch{}
   };
-  es.addEventListener("clear",()=>{feed.innerHTML="";});
+  es.addEventListener("clear",()=>{
+    feed.innerHTML="";
+    // Reconnect sofort danach
+    setTimeout(()=>{es.close();connect();},200);
+  });
 }
 connect();
 </script>
@@ -345,10 +333,10 @@ connect();
   `);
 });
 
-// === HEALTH CHECK ===
+// === HEALTH ===
 app.get("/healthz", (_, res) => res.send("OK"));
 
-// === START SERVER ===
+// === START ===
 app.listen(PORT, async () => {
   console.log(`🚀 Server läuft auf Port ${PORT}`);
   await registerTwitchEvents();
