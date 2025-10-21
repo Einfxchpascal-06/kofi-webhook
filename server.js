@@ -171,22 +171,27 @@ app.post("/twitch", (req, res) => {
           break;
         }
 
-        case "channel.cheer": {
-          const bits = event.bits || 0;
-          const msg =
-            typeof event.message === "object"
-              ? event.message.text
-              : typeof event.message === "string"
-              ? event.message
-              : "";
-          const cleanMsg = msg?.trim() ? ` – "${msg.trim()}"` : "";
-          pushFeed({
-            type: "twitch_bits",
-            message: `💎 ${event.user_name} sendete ${bits} Bits${cleanMsg}`,
-            time: Date.now(),
-          });
-          break;
-        }
+case "channel.cheer": {
+  const bits = event.bits || 0;
+
+  // Extrahiere Nachricht aus event.message oder message.text
+  let rawMsg = "";
+  if (typeof event.message === "string") rawMsg = event.message;
+  else if (typeof event.message === "object") rawMsg = event.message.text || "";
+  rawMsg = (rawMsg || "").trim();
+
+  // Entferne den cheer-Tag, egal ob vorne oder hinten
+  const cleanMsg = rawMsg.replace(/cheer\d+/gi, "").trim();
+
+  const msgText = cleanMsg ? ` – "${cleanMsg}"` : "";
+
+  pushFeed({
+    type: "twitch_bits",
+    message: `💎 ${event.user_name} sendete ${bits} Bits${msgText}`,
+    time: Date.now(),
+  });
+  break;
+}
 
         case "channel.channel_points_custom_reward_redemption.add": {
           const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
