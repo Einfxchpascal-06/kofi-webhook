@@ -208,6 +208,8 @@ app.post("/twitch", (req, res) => {
           break;
         }
 
+        // Power-Up deaktiviert – aktuell nicht verfügbar:
+        /*
         case "channel.power_up": {
           const user = event.user_name || "Unbekannt";
           const powerType = event.power_up_type || "Power-Up";
@@ -219,6 +221,7 @@ app.post("/twitch", (req, res) => {
           });
           break;
         }
+        */
       }
     } catch (err) {
       console.log("⚠️ Fehler bei Twitch-Event:", err);
@@ -255,7 +258,7 @@ async function registerTwitchEvents() {
       "channel.cheer",
       "channel.channel_points_custom_reward_redemption.add",
       "channel.raid",
-      "channel.power_up",
+      // "channel.power_up", // aktuell deaktiviert (führt zu 410 Gone)
     ];
 
     for (const type of topics) {
@@ -292,8 +295,7 @@ async function registerTwitchEvents() {
 // ==================== 🌐 FRONTEND ====================
 app.get("/feed", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(`
-<!doctype html>
+  res.send(`<!doctype html>
 <html lang="de">
 <head>
 <meta charset="utf-8" />
@@ -313,7 +315,6 @@ app.get("/feed", (req, res) => {
     --bits: #00c8ff;
     --points: #00ff95;
     --raid: #ff3d8e;
-    --powerup: #ffaa00;
   }
   body { margin:0; background:var(--bg); color:var(--text); font-family:"Segoe UI",Roboto,sans-serif; }
   header { padding:12px 18px; background:rgba(20,20,25,0.85); border-bottom:1px solid #222; backdrop-filter:blur(8px);
@@ -321,13 +322,8 @@ app.get("/feed", (req, res) => {
   header h1 { font-size:18px; margin:0; }
   #status { font-size:13px; color:var(--muted); }
   #feed { padding:16px; display:flex; flex-direction:column-reverse; }
-  .entry {
-    background:var(--card);
-    margin-bottom:10px; padding:10px 14px;
-    border-left:4px solid var(--accent);
-    border-radius:10px; box-shadow:0 3px 10px rgba(0,0,0,0.25);
-    animation:fadeIn .3s ease forwards;
-  }
+  .entry { background:var(--card); margin-bottom:10px; padding:10px 14px; border-left:4px solid var(--accent);
+           border-radius:10px; box-shadow:0 3px 10px rgba(0,0,0,0.25); animation:fadeIn .3s ease forwards; }
   @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
   .msg { font-weight:600; }
   .time { font-size:12px; color:var(--muted); margin-top:2px; }
@@ -338,7 +334,6 @@ app.get("/feed", (req, res) => {
   .twitch_bits { border-left-color:var(--bits); }
   .twitch_points { border-left-color:var(--points); }
   .twitch_raid { border-left-color:var(--raid); }
-  .twitch_powerup { border-left-color:var(--powerup); }
   button { background:var(--raid); border:none; color:white; padding:6px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
   button:hover { opacity:0.8; }
 </style>
@@ -375,8 +370,7 @@ function connect(){
 connect();
 </script>
 </body>
-</html>
-  `);
+</html>`);
 });
 
 // === HEALTH CHECK ===
