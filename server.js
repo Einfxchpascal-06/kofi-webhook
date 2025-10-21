@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch (EventSub v2) + Ko-fi + Feed + Autoping + Reset-Button 😎
+// Twitch (EventSub) + Ko-fi + Feed + Autoping – Vollautomatisch 😎
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -10,18 +10,18 @@ import crypto from "crypto";
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// === ENV-VARS ===
+// === ENV VARIABLEN ===
 const KOFI_VERIFICATION_TOKEN = process.env.KO_FI_TOKEN;
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER;
-const TWITCH_SECRET = "soundwave_secret_2025"; // Signatur-Schlüssel
+const TWITCH_SECRET = "soundwave_secret_2025"; // eigener Signaturschlüssel
 
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// === SPEICHER ===
+// === EVENT STORAGE ===
 let feedEntries = [];
 let clients = [];
 
@@ -34,7 +34,7 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // Beim Verbinden alte Einträge senden (neueste oben)
+  // 🔹 Alte Einträge so senden, dass die neuesten oben stehen
   for (const e of [...feedEntries]) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
@@ -46,9 +46,12 @@ app.get("/events", (req, res) => {
 });
 
 function pushFeed(entry) {
+  // 🔹 Immer an den Anfang der Liste setzen
   feedEntries.unshift(entry);
   if (feedEntries.length > 200) feedEntries.pop();
   const payload = `data: ${JSON.stringify(entry)}\n\n`;
+
+  // 🔹 An alle verbundenen Clients senden
   for (const res of clients) {
     try {
       res.write(payload);
@@ -56,7 +59,7 @@ function pushFeed(entry) {
   }
 }
 
-// Verbindung aktiv halten
+// Keep-alive Ping
 setInterval(() => {
   clients.forEach((res) =>
     res.write(
@@ -65,10 +68,12 @@ setInterval(() => {
   );
 }, 55000);
 
-// === Feed resetten ===
+// === Feed clear ===
 app.post("/clear", (_, res) => {
   feedEntries = [];
-  for (const c of clients) c.write(`event: clear\ndata: {}\n\n`);
+  for (const client of clients) {
+    client.write(`event: clear\ndata: {}\n\n`);
+  }
   res.sendStatus(200);
 });
 
@@ -98,13 +103,11 @@ app.post("/kofi", (req, res) => {
   const message = data.message || "";
 
   console.log(`☕ Neue Ko-fi Donation: ${name} ${amount} ${currency} – "${message}"`);
-
   pushFeed({
     type: "kofi",
     message: `☕ ${name} spendete ${amount} ${currency} – "${message}"`,
     time: Date.now(),
   });
-
   res.sendStatus(200);
 });
 
@@ -135,6 +138,7 @@ app.post("/twitch", (req, res) => {
 
   const event = req.body.event;
   const type = req.body.subscription?.type;
+
   console.log("🎯 Twitch Event:", type, event);
 
   if (msgType === "notification") {
@@ -158,7 +162,7 @@ app.post("/twitch", (req, res) => {
 
         case "channel.subscription.gift": {
           const gifter = event.user_name || "Unbekannt";
-          const total = event.total || event.total_gifted || 1;
+          const total = event.total || 1;
           pushFeed({
             type: "twitch_gift",
             message: `🎁 Gift Sub: ${gifter} → ${total}`,
@@ -216,7 +220,7 @@ app.post("/twitch", (req, res) => {
   res.sendStatus(200);
 });
 
-// === Auto-Setup für Twitch EventSub ===
+// === Twitch Auto-Subscribe beim Start ===
 async function registerTwitchEvents() {
   try {
     const tokenRes = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -226,45 +230,35 @@ async function registerTwitchEvents() {
         grant_type: "client_credentials",
       },
     });
+
     const appToken = tokenRes.data.access_token;
     console.log("✅ Twitch App Token erhalten.");
 
-    const userRes = await axios.get(
-      `https://api.twitch.tv/helix/users?login=${TWITCH_USER}`,
-      {
-        headers: {
-          Authorization: `Bearer ${appToken}`,
-          "Client-Id": TWITCH_CLIENT_ID,
-        },
-      }
-    );
-
+    const userRes = await axios.get(`https://api.twitch.tv/helix/users?login=${TWITCH_USER}`, {
+      headers: { Authorization: `Bearer ${appToken}`, "Client-Id": TWITCH_CLIENT_ID },
+    });
     const userId = userRes.data.data[0].id;
     console.log("🆔 Twitch User-ID:", userId);
 
     const topics = [
-      { type: "channel.follow", version: "2" },
-      { type: "channel.subscribe", version: "2" },
-      { type: "channel.subscription.gift", version: "2" },
-      { type: "channel.cheer", version: "1" },
-      { type: "channel.channel_points_custom_reward_redemption.add", version: "1" },
-      { type: "channel.raid", version: "1" },
+      "channel.follow",
+      "channel.subscribe",
+      "channel.subscription.gift",
+      "channel.cheer",
+      "channel.channel_points_custom_reward_redemption.add",
+      "channel.raid",
     ];
 
-    for (const { type, version } of topics) {
-      const condition =
-        type === "channel.raid"
-          ? { to_broadcaster_user_id: userId }
-          : type.includes("moderator")
-          ? { broadcaster_user_id: userId, moderator_user_id: userId }
-          : { broadcaster_user_id: userId };
-
+    for (const type of topics) {
       await axios.post(
         "https://api.twitch.tv/helix/eventsub/subscriptions",
         {
           type,
-          version,
-          condition,
+          version: "1",
+          condition:
+            type === "channel.raid"
+              ? { to_broadcaster_user_id: userId }
+              : { broadcaster_user_id: userId },
           transport: {
             method: "webhook",
             callback: `https://kofi-webhook-e87r.onrender.com/twitch`,
@@ -279,13 +273,10 @@ async function registerTwitchEvents() {
           },
         }
       );
-      console.log(`📡 Twitch EventSub "${type}" (v${version}) registriert.`);
+      console.log(`📡 Twitch EventSub "${type}" registriert.`);
     }
   } catch (err) {
-    console.error(
-      "❌ Fehler beim Twitch-EventSub-Setup:",
-      err.response?.data || err.message
-    );
+    console.error("❌ Fehler beim Twitch-EventSub-Setup:", err.response?.data || err.message);
   }
 }
 
@@ -300,31 +291,32 @@ app.get("/feed", (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
-    --bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#a5a5b0;
-    --accent:#18e0d0;--kofi:#ff7f32;--twitch:#9146ff;
-    --sub:#6e46ff;--gift:#b57aff;--bits:#00c8ff;
-    --points:#00ff95;--raid:#ff3d8e;
+    --bg: #0e0e10; --card: #15151a; --text: #fff; --muted: #a5a5b0;
+    --accent: #18e0d0; --kofi: #ff7f32; --twitch: #9146ff;
+    --sub: #6e46ff; --gift: #b57aff; --bits: #00c8ff;
+    --points: #00ff95; --raid: #ff3d8e;
   }
-  body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Roboto,sans-serif;}
-  header{padding:12px 18px;background:rgba(20,20,25,.85);border-bottom:1px solid #222;
-    backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:space-between;}
-  h1{font-size:18px;margin:0;}
-  #status{font-size:13px;color:var(--muted);}
-  #feed{padding:16px;display:flex;flex-direction:column-reverse;}
-  .entry{background:var(--card);margin-bottom:10px;padding:10px 14px;border-left:4px solid var(--accent);
-    border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,.25);animation:fadeIn .3s ease forwards;}
-  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-  .msg{font-weight:600;}
-  .time{font-size:12px;color:var(--muted);margin-top:2px;}
-  .kofi{border-left-color:var(--kofi);}
-  .twitch_follow{border-left-color:var(--twitch);}
-  .twitch_sub{border-left-color:var(--sub);}
-  .twitch_gift{border-left-color:var(--gift);}
-  .twitch_bits{border-left-color:var(--bits);}
-  .twitch_points{border-left-color:var(--points);}
-  .twitch_raid{border-left-color:var(--raid);}
-  button{background:var(--raid);border:none;color:#fff;padding:6px 12px;border-radius:8px;cursor:pointer;font-weight:600;}
-  button:hover{opacity:.8;}
+  body { margin:0; background:var(--bg); color:var(--text); font-family:"Segoe UI",Roboto,sans-serif; }
+  header { padding:12px 18px; background:rgba(20,20,25,0.85); border-bottom:1px solid #222;
+    backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:space-between; }
+  header h1 { font-size:18px; margin:0; }
+  #status { font-size:13px; color:var(--muted); }
+  #feed { padding:16px; display:flex; flex-direction:column; }
+  .entry { background:var(--card); margin-bottom:10px; padding:10px 14px;
+    border-left:4px solid var(--accent); border-radius:10px; box-shadow:0 3px 10px rgba(0,0,0,0.25);
+    animation:fadeIn .3s ease forwards; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .msg { font-weight:600; }
+  .time { font-size:12px; color:var(--muted); margin-top:2px; }
+  .kofi { border-left-color:var(--kofi); }
+  .twitch_follow { border-left-color:var(--twitch); }
+  .twitch_sub { border-left-color:var(--sub); }
+  .twitch_gift { border-left-color:var(--gift); }
+  .twitch_bits { border-left-color:var(--bits); }
+  .twitch_points { border-left-color:var(--points); }
+  .twitch_raid { border-left-color:var(--raid); }
+  button { background:var(--raid); border:none; color:white; padding:6px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
+  button:hover { opacity:0.8; }
 </style>
 </head>
 <body>
@@ -337,9 +329,7 @@ app.get("/feed", (req, res) => {
   </header>
   <div id="feed"></div>
 <script>
-const feed=document.getElementById("feed");
-const statusEl=document.getElementById("status");
-
+const feed=document.getElementById("feed"),statusEl=document.getElementById("status");
 function fmtTime(ts){return new Date(ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});}
 function addEntry(e){
   const div=document.createElement("div");
@@ -361,10 +351,10 @@ connect();
 </html>`);
 });
 
-// === HEALTH ===
+// === HEALTH CHECK ===
 app.get("/healthz", (_, res) => res.send("OK"));
 
-// === START ===
+// === START SERVER ===
 app.listen(PORT, async () => {
   console.log(`🚀 Server läuft auf Port ${PORT}`);
   await registerTwitchEvents();
