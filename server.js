@@ -34,7 +34,11 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  for (const e of feedEntries) res.write(`data: ${JSON.stringify(e)}\n\n`);
+  // Neueste zuerst auch beim Reconnect!
+  for (const e of [...feedEntries].reverse()) {
+    res.write(`data: ${JSON.stringify(e)}\n\n`);
+  }
+
   clients.push(res);
 
   req.on("close", () => {
