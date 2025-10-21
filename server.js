@@ -152,15 +152,24 @@ app.post("/twitch", (req, res) => {
           time: Date.now(),
         });
         break;
-      case "channel.cheer":
-        pushFeed({
-          type: "twitch_bits",
-          message: event.message
-            ? `💎 ${event.user_name} sendete ${event.bits} Bits – "${event.message.text}"`
-            : `💎 ${event.user_name} sendete ${event.bits} Bits!`,
-          time: Date.now(),
-        });
-        break;
+      case "channel.cheer": {
+  const bits = event.bits || 0;
+  // Twitch sendet message unterschiedlich
+  const msg =
+    typeof event.message === "object"
+      ? event.message.text
+      : typeof event.message === "string"
+      ? event.message
+      : "";
+  const cleanMsg = msg?.trim() ? ` – "${msg.trim()}"` : "";
+
+  pushFeed({
+    type: "twitch_bits",
+    message: `💎 ${event.user_name} sendete ${bits} Bits${cleanMsg}`,
+    time: Date.now(),
+  });
+  break;
+}
       case "channel.channel_points_custom_reward_redemption.add":
         const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
         pushFeed({
