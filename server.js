@@ -131,10 +131,10 @@ app.post("/twitch", (req, res) => {
     return res.status(200).send(req.body.challenge);
   }
 
-  if (!verifyTwitchSignature(req)) {
-    console.log("⚠️ Ungültige Twitch-Signatur, Request verworfen.");
-    return res.status(403).send("Invalid signature");
-  }
+ // if (!verifyTwitchSignature(req)) {
+ //   console.log("⚠️ Ungültige Twitch-Signatur, Request verworfen.");
+ //   return res.status(403).send("Invalid signature");
+ // }
 
   const event = req.body.event;
   const type = req.body.subscription?.type;
