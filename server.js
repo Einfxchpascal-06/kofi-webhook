@@ -34,8 +34,8 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // 🔹 Alte Einträge so senden, dass die neuesten oben stehen
-  for (const e of [...feedEntries]) {
+  // Neueste zuerst senden
+  for (const e of feedEntries) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
 
@@ -46,12 +46,9 @@ app.get("/events", (req, res) => {
 });
 
 function pushFeed(entry) {
-  // 🔹 Immer an den Anfang der Liste setzen
   feedEntries.unshift(entry);
   if (feedEntries.length > 200) feedEntries.pop();
   const payload = `data: ${JSON.stringify(entry)}\n\n`;
-
-  // 🔹 An alle verbundenen Clients senden
   for (const res of clients) {
     try {
       res.write(payload);
@@ -59,12 +56,9 @@ function pushFeed(entry) {
   }
 }
 
-// Keep-alive Ping
 setInterval(() => {
   clients.forEach((res) =>
-    res.write(
-      `event: ping\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`
-    )
+    res.write(`event: ping\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`)
   );
 }, 55000);
 
@@ -131,15 +125,13 @@ app.post("/twitch", (req, res) => {
     return res.status(200).send(req.body.challenge);
   }
 
- if (!verifyTwitchSignature(req)) {
+  if (!verifyTwitchSignature(req)) {
     console.log("⚠️ Ungültige Twitch-Signatur, Request verworfen.");
     return res.status(403).send("Invalid signature");
   }
 
   const event = req.body.event;
   const type = req.body.subscription?.type;
-
-  console.log("🎯 Twitch Event:", type, event);
 
   if (msgType === "notification") {
     try {
@@ -152,47 +144,56 @@ app.post("/twitch", (req, res) => {
           });
           break;
 
-        case "channel.subscribe":
+        // === Nur echte Subs (keine Geschenke) ===
+        case "channel.subscribe": {
+          if (event.is_gift) break;
+          const tierMap = { "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3" };
+          const tier = tierMap[event.tier] || "Tier ?";
+          const months = event.cumulative_months || 1;
+          const msgText = event.message?.text
+            ? ` – "${event.message.text.trim()}"`
+            : "";
           pushFeed({
             type: "twitch_sub",
-            message: `💜 Sub: ${event.user_name || "Neuer Sub"}`,
-            time: Date.now(),
-          });
-          break;
-
-        case "channel.subscription.gift": {
-          const gifter = event.user_name || "Unbekannt";
-          const total = event.total || 1;
-          pushFeed({
-            type: "twitch_gift",
-            message: `🎁 Gift Sub: ${gifter} → ${total}`,
+            message: `💜 Sub: ${event.user_name} (${tier}, ${months} Monat${months > 1 ? "e" : ""})${msgText}`,
             time: Date.now(),
           });
           break;
         }
 
-case "channel.cheer": {
-  const bits = event.bits || 0;
+        // === Sub-Gifts ===
+        case "channel.subscription.gift": {
+          const gifter = event.user_name || "Unbekannt";
+          const total = event.total || 1;
+          const tierMap = { "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3" };
+          const tier = tierMap[event.tier] || "Tier ?";
+          pushFeed({
+            type: "twitch_gift",
+            message: `🎁 Gift Sub: ${gifter} → ${total}x ${tier}`,
+            time: Date.now(),
+          });
+          break;
+        }
 
-  // Extrahiere Nachricht aus event.message oder message.text
-  let rawMsg = "";
-  if (typeof event.message === "string") rawMsg = event.message;
-  else if (typeof event.message === "object") rawMsg = event.message.text || "";
-  rawMsg = (rawMsg || "").trim();
+        // === Bits ===
+        case "channel.cheer": {
+          const bits = event.bits || 0;
+          const msg =
+            typeof event.message === "object"
+              ? event.message.text
+              : typeof event.message === "string"
+              ? event.message
+              : "";
+          const cleanMsg = msg?.trim() ? ` – "${msg.trim()}"` : "";
+          pushFeed({
+            type: "twitch_bits",
+            message: `💎 ${event.user_name} sendete ${bits} Bits${cleanMsg}`,
+            time: Date.now(),
+          });
+          break;
+        }
 
-  // Entferne den cheer-Tag, egal ob vorne oder hinten
-  const cleanMsg = rawMsg.replace(/cheer\d+/gi, "").trim();
-
-  const msgText = cleanMsg ? ` – "${cleanMsg}"` : "";
-
-  pushFeed({
-    type: "twitch_bits",
-    message: `💎 ${event.user_name} sendete ${bits} Bits${msgText}`,
-    time: Date.now(),
-  });
-  break;
-}
-
+        // === Kanalpunkte ===
         case "channel.channel_points_custom_reward_redemption.add": {
           const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
           pushFeed({
@@ -203,6 +204,7 @@ case "channel.cheer": {
           break;
         }
 
+        // === Raid ===
         case "channel.raid": {
           const raider =
             event.from_broadcaster_user_name ||
@@ -296,32 +298,30 @@ app.get("/feed", (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
-    --bg: #0e0e10; --card: #15151a; --text: #fff; --muted: #a5a5b0;
-    --accent: #18e0d0; --kofi: #ff7f32; --twitch: #9146ff;
-    --sub: #6e46ff; --gift: #b57aff; --bits: #00c8ff;
-    --points: #00ff95; --raid: #ff3d8e;
+    --bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#a5a5b0;--accent:#18e0d0;
+    --kofi:#ff7f32;--twitch:#9146ff;--sub:#6e46ff;--gift:#b57aff;--bits:#00c8ff;
+    --points:#00ff95;--raid:#ff3d8e;
   }
-  body { margin:0; background:var(--bg); color:var(--text); font-family:"Segoe UI",Roboto,sans-serif; }
-  header { padding:12px 18px; background:rgba(20,20,25,0.85); border-bottom:1px solid #222;
-    backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:space-between; }
-  header h1 { font-size:18px; margin:0; }
-  #status { font-size:13px; color:var(--muted); }
-  #feed { padding:16px; display:flex; flex-direction:column; }
-  .entry { background:var(--card); margin-bottom:10px; padding:10px 14px;
-    border-left:4px solid var(--accent); border-radius:10px; box-shadow:0 3px 10px rgba(0,0,0,0.25);
-    animation:fadeIn .3s ease forwards; }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-  .msg { font-weight:600; }
-  .time { font-size:12px; color:var(--muted); margin-top:2px; }
-  .kofi { border-left-color:var(--kofi); }
-  .twitch_follow { border-left-color:var(--twitch); }
-  .twitch_sub { border-left-color:var(--sub); }
-  .twitch_gift { border-left-color:var(--gift); }
-  .twitch_bits { border-left-color:var(--bits); }
-  .twitch_points { border-left-color:var(--points); }
-  .twitch_raid { border-left-color:var(--raid); }
-  button { background:var(--raid); border:none; color:white; padding:6px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
-  button:hover { opacity:0.8; }
+  body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Roboto,sans-serif;}
+  header{padding:12px 18px;background:rgba(20,20,25,0.85);border-bottom:1px solid #222;
+         backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:space-between;}
+  header h1{font-size:18px;margin:0;}
+  #status{font-size:13px;color:var(--muted);}
+  #feed{padding:16px;display:flex;flex-direction:column;}
+  .entry{background:var(--card);margin-bottom:10px;padding:10px 14px;border-left:4px solid var(--accent);
+         border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,0.25);animation:fadeIn .3s ease forwards;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .msg{font-weight:600;}
+  .time{font-size:12px;color:var(--muted);margin-top:2px;}
+  .kofi{border-left-color:var(--kofi);}
+  .twitch_follow{border-left-color:var(--twitch);}
+  .twitch_sub{border-left-color:var(--sub);}
+  .twitch_gift{border-left-color:var(--gift);}
+  .twitch_bits{border-left-color:var(--bits);}
+  .twitch_points{border-left-color:var(--points);}
+  .twitch_raid{border-left-color:var(--raid);}
+  button{background:var(--raid);border:none;color:white;padding:6px 12px;border-radius:8px;cursor:pointer;font-weight:600;}
+  button:hover{opacity:0.8;}
 </style>
 </head>
 <body>
@@ -336,20 +336,15 @@ app.get("/feed", (req, res) => {
 <script>
 const feed=document.getElementById("feed"),statusEl=document.getElementById("status");
 function fmtTime(ts){return new Date(ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});}
-function addEntry(e){
-  const div=document.createElement("div");
-  div.className="entry "+e.type;
-  div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;
-  feed.prepend(div);
-}
+function addEntry(e){const div=document.createElement("div");div.className="entry "+e.type;
+div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;feed.prepend(div);}
 function clearFeed(){feed.innerHTML="";fetch("/clear",{method:"POST"});}
-function connect(){
-  const es=new EventSource("/events");
-  es.onopen=()=>statusEl.textContent="🟢 Live verbunden";
-  es.onerror=()=>statusEl.textContent="🔴 Verbindung getrennt…";
-  es.addEventListener("clear",()=>feed.innerHTML="");
-  es.onmessage=ev=>{try{addEntry(JSON.parse(ev.data));}catch{}};
-}
+let es=null,isConnecting=false;
+function connect(){if(isConnecting)return;isConnecting=true;if(es){try{es.close();}catch{}}
+es=new EventSource("/events");es.onopen=()=>{statusEl.textContent="🟢 Live verbunden";isConnecting=false;};
+es.onerror=()=>{statusEl.textContent="🔴 Verbindung getrennt…";setTimeout(connect,5000);};
+es.addEventListener("clear",()=>feed.innerHTML="");
+es.onmessage=ev=>{try{addEntry(JSON.parse(ev.data));}catch{}};}
 connect();
 </script>
 </body>
