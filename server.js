@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch (EventSub v2 fix) + Ko-fi + Feed + Autoping 😎
+// Twitch (EventSub v2 Fix) + Ko-fi + Feed + Auto-Ping 😎
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -34,23 +34,22 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
+  // neueste zuerst
   for (const e of [...feedEntries].reverse()) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
 
   clients.push(res);
-  req.on("close", () => {
-    clients = clients.filter((c) => c !== res);
-  });
+  req.on("close", () => (clients = clients.filter((c) => c !== res)));
 });
 
 function pushFeed(entry) {
   feedEntries.unshift(entry);
   if (feedEntries.length > 200) feedEntries.pop();
   const payload = `data: ${JSON.stringify(entry)}\n\n`;
-  for (const res of clients) {
+  for (const c of clients) {
     try {
-      res.write(payload);
+      c.write(payload);
     } catch {}
   }
 }
@@ -64,9 +63,7 @@ setInterval(() => {
 // === Feed clear ===
 app.post("/clear", (_, res) => {
   feedEntries = [];
-  for (const client of clients) {
-    client.write(`event: clear\ndata: {}\n\n`);
-  }
+  for (const c of clients) c.write(`event: clear\ndata: {}\n\n`);
   res.sendStatus(200);
 });
 
@@ -188,8 +185,7 @@ app.post("/twitch", (req, res) => {
         }
 
         case "channel.raid": {
-          const raider =
-            event.from_broadcaster_user_name || event.broadcaster_user_name || "Unbekannt";
+          const raider = event.from_broadcaster_user_name || "Unbekannt";
           const viewers = event.viewers || 0;
           pushFeed({
             type: "twitch_raid",
@@ -236,6 +232,7 @@ async function registerTwitchEvents() {
     console.log("🆔 Twitch User-ID:", userId);
 
     const topics = [
+      "channel.update",
       "channel.follow",
       "channel.subscribe",
       "channel.subscription.gift",
@@ -249,29 +246,37 @@ async function registerTwitchEvents() {
         ? "2"
         : "1";
 
-      await axios.post(
-        "https://api.twitch.tv/helix/eventsub/subscriptions",
-        {
-          type,
-          version,
-          condition: type === "channel.raid"
-            ? { to_broadcaster_user_id: userId }
-            : { broadcaster_user_id: userId },
-          transport: {
-            method: "webhook",
-            callback: `https://kofi-webhook-e87r.onrender.com/twitch`,
-            secret: TWITCH_SECRET,
+      try {
+        await axios.post(
+          "https://api.twitch.tv/helix/eventsub/subscriptions",
+          {
+            type,
+            version,
+            condition:
+              type === "channel.raid"
+                ? { to_broadcaster_user_id: userId }
+                : { broadcaster_user_id: userId },
+            transport: {
+              method: "webhook",
+              callback: `https://kofi-webhook-e87r.onrender.com/twitch`,
+              secret: TWITCH_SECRET,
+            },
           },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${appToken}`,
-            "Client-Id": TWITCH_CLIENT_ID,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      console.log(`📡 Twitch EventSub "${type}" (v${version}) registriert.`);
+          {
+            headers: {
+              Authorization: `Bearer ${appToken}`,
+              "Client-Id": TWITCH_CLIENT_ID,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        console.log(`📡 Twitch EventSub "${type}" (v${version}) registriert.`);
+      } catch (err) {
+        console.log(
+          `⚠️ Twitch EventSub "${type}" konnte nicht registriert werden:`,
+          err.response?.data || err.message
+        );
+      }
     }
   } catch (err) {
     console.error("❌ Fehler beim Twitch-EventSub-Setup:", err.response?.data || err.message);
@@ -283,58 +288,35 @@ app.get("/feed", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`<!doctype html>
 <html lang="de">
-<head>
-<meta charset="utf-8" />
-<title>McHobi's Activity Feed</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<head><meta charset="utf-8"/><title>McHobi's Activity Feed</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  :root {
-    --bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#a5a5b0;--accent:#18e0d0;
-    --kofi:#ff7f32;--twitch:#9146ff;--sub:#6e46ff;--gift:#b57aff;
-    --bits:#00c8ff;--points:#00ff95;--raid:#ff3d8e;
-  }
-  body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Roboto,sans-serif;}
-  header{padding:12px 18px;background:rgba(20,20,25,.85);border-bottom:1px solid #222;
-    backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:space-between;}
-  header h1{font-size:18px;margin:0;}
-  #status{font-size:13px;color:var(--muted);}
-  #feed{padding:16px;display:flex;flex-direction:column;}
-  .entry{background:var(--card);margin-bottom:10px;padding:10px 14px;border-left:4px solid var(--accent);
-    border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,.25);animation:fadeIn .3s ease forwards;}
-  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-  .msg{font-weight:600;}
-  .time{font-size:12px;color:var(--muted);margin-top:2px;}
-  .kofi{border-left-color:var(--kofi);} .twitch_follow{border-left-color:var(--twitch);}
-  .twitch_sub{border-left-color:var(--sub);} .twitch_gift{border-left-color:var(--gift);}
-  .twitch_bits{border-left-color:var(--bits);} .twitch_points{border-left-color:var(--points);}
-  .twitch_raid{border-left-color:var(--raid);}
-</style>
-</head>
-<body>
-  <header>
-    <h1>🎧 McHobi's Activity Feed</h1>
-    <div id="status">Verbinde…</div>
-  </header>
-  <div id="feed"></div>
+:root{--bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#a5a5b0;--accent:#18e0d0;
+--kofi:#ff7f32;--twitch:#9146ff;--sub:#6e46ff;--gift:#b57aff;--bits:#00c8ff;--points:#00ff95;--raid:#ff3d8e;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Roboto,sans-serif;}
+header{padding:12px 18px;background:rgba(20,20,25,.85);border-bottom:1px solid #222;
+backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:space-between;}
+header h1{font-size:18px;margin:0;}#status{font-size:13px;color:var(--muted);}
+#feed{padding:16px;display:flex;flex-direction:column;}
+.entry{background:var(--card);margin-bottom:10px;padding:10px 14px;border-left:4px solid var(--accent);
+border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,.25);animation:fadeIn .3s ease forwards;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg{font-weight:600;}.time{font-size:12px;color:var(--muted);margin-top:2px;}
+.kofi{border-left-color:var(--kofi)}.twitch_follow{border-left-color:var(--twitch)}
+.twitch_sub{border-left-color:var(--sub)}.twitch_gift{border-left-color:var(--gift)}
+.twitch_bits{border-left-color:var(--bits)}.twitch_points{border-left-color:var(--points)}
+.twitch_raid{border-left-color:var(--raid)}
+</style></head><body>
+<header><h1>🎧 McHobi's Activity Feed</h1><div id="status">Verbinde…</div></header>
+<div id="feed"></div>
 <script>
-const feed=document.getElementById("feed"),statusEl=document.getElementById("status");
-function fmtTime(ts){return new Date(ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});}
-function addEntry(e){
-  const div=document.createElement("div");
-  div.className="entry "+e.type;
-  div.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${fmtTime(e.time)}</div>\`;
-  feed.prepend(div);
-}
-function connect(){
-  const es=new EventSource("/events");
-  es.onopen=()=>statusEl.textContent="🟢 Live verbunden";
-  es.onerror=()=>statusEl.textContent="🔴 Verbindung getrennt…";
-  es.onmessage=ev=>{try{addEntry(JSON.parse(ev.data));}catch{}};
-}
-connect();
-</script>
-</body>
-</html>`);
+const f=document.getElementById("feed"),s=document.getElementById("status");
+function t(e){return new Date(e).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}
+function a(e){const d=document.createElement("div");d.className="entry "+e.type;
+d.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${t(e.time)}</div>\`;f.prepend(d)}
+const es=new EventSource("/events");es.onopen=()=>s.textContent="🟢 Live verbunden";
+es.onerror=()=>s.textContent="🔴 Verbindung getrennt…";es.onmessage=e=>{try{a(JSON.parse(e.data))}catch{}};
+</script></body></html>`);
 });
 
 // === HEALTH CHECK ===
