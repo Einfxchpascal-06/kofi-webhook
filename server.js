@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch (EventSub v2 Fix) + Ko-fi + Feed + Auto-Ping 😎
+// Twitch (EventSub v2 fixed) + Ko-fi + Feed Display
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -18,8 +18,8 @@ const TWITCH_USER = process.env.TWITCH_USER;
 const TWITCH_SECRET = "soundwave_secret_2025";
 
 app.use(cors());
-app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
 // === EVENT STORAGE ===
 let feedEntries = [];
@@ -34,7 +34,6 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // neueste zuerst
   for (const e of [...feedEntries].reverse()) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
@@ -60,7 +59,6 @@ setInterval(() => {
   );
 }, 55000);
 
-// === Feed clear ===
 app.post("/clear", (_, res) => {
   feedEntries = [];
   for (const c of clients) c.write(`event: clear\ndata: {}\n\n`);
@@ -123,7 +121,7 @@ app.post("/twitch", (req, res) => {
   }
 
   if (!verifyTwitchSignature(req)) {
-    console.log("⚠️ Ungültige Twitch-Signatur, Request verworfen.");
+    console.log("⚠️ Ungültige Twitch-Signatur.");
     return res.status(403).send("Invalid signature");
   }
 
@@ -134,10 +132,6 @@ app.post("/twitch", (req, res) => {
   if (msgType === "notification") {
     try {
       switch (type) {
-        case "channel.follow":
-          pushFeed({ type: "twitch_follow", message: `🟣 Follow: ${event.user_name}`, time: Date.now() });
-          break;
-
         case "channel.subscribe":
           pushFeed({
             type: "twitch_sub",
@@ -146,19 +140,15 @@ app.post("/twitch", (req, res) => {
           });
           break;
 
-        case "channel.subscription.gift": {
-          const gifter = event.user_name || "Unbekannt";
-          const count = event.total || 1;
+        case "channel.subscription.gift":
           pushFeed({
             type: "twitch_gift",
-            message: `🎁 Gift Sub: ${gifter} → ${count}`,
+            message: `🎁 ${event.user_name || "Jemand"} verschenkte ${event.total || 1} Sub(s)!`,
             time: Date.now(),
           });
           break;
-        }
 
-        case "channel.cheer": {
-          const bits = event.bits || 0;
+        case "channel.cheer":
           const msg =
             typeof event.message === "object"
               ? event.message.text
@@ -168,32 +158,18 @@ app.post("/twitch", (req, res) => {
           const cleanMsg = msg?.trim() ? ` – "${msg.trim()}"` : "";
           pushFeed({
             type: "twitch_bits",
-            message: `💎 ${event.user_name} sendete ${bits} Bits${cleanMsg}`,
+            message: `💎 ${event.user_name} sendete ${event.bits} Bits${cleanMsg}`,
             time: Date.now(),
           });
           break;
-        }
 
-        case "channel.channel_points_custom_reward_redemption.add": {
-          const input = event.user_input ? ` ✏️ "${event.user_input}"` : "";
-          pushFeed({
-            type: "twitch_points",
-            message: `🎯 ${event.user_name} löste "${event.reward.title}" ein!${input}`,
-            time: Date.now(),
-          });
-          break;
-        }
-
-        case "channel.raid": {
-          const raider = event.from_broadcaster_user_name || "Unbekannt";
-          const viewers = event.viewers || 0;
+        case "channel.raid":
           pushFeed({
             type: "twitch_raid",
-            message: `🚀 Raid von ${raider} mit ${viewers} Zuschauern!`,
+            message: `🚀 Raid von ${event.from_broadcaster_user_name} mit ${event.viewers} Zuschauern!`,
             time: Date.now(),
           });
           break;
-        }
       }
     } catch (err) {
       console.log("⚠️ Fehler bei Twitch-Event:", err);
@@ -211,7 +187,7 @@ app.get("/twitch/callback", (req, res) => {
   console.log("🔑 Twitch OAuth Code erhalten:", code);
 });
 
-// === Twitch Auto-Subscribe beim Start ===
+// === Twitch Auto-Subscribe ===
 async function registerTwitchEvents() {
   try {
     const tokenRes = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -231,29 +207,23 @@ async function registerTwitchEvents() {
     const userId = userRes.data.data[0].id;
     console.log("🆔 Twitch User-ID:", userId);
 
+    // Nur unterstützte Topics (App-Token-kompatibel)
     const topics = [
-      "channel.update",
-      "channel.follow",
-      "channel.subscribe",
-      "channel.subscription.gift",
-      "channel.cheer",
-      "channel.channel_points_custom_reward_redemption.add",
-      "channel.raid",
+      { type: "channel.subscribe", version: "2" },
+      { type: "channel.subscription.gift", version: "2" },
+      { type: "channel.cheer", version: "1" },
+      { type: "channel.raid", version: "2" },
     ];
 
-    for (const type of topics) {
-      const version = ["channel.subscribe", "channel.subscription.gift", "channel.raid"].includes(type)
-        ? "2"
-        : "1";
-
+    for (const topic of topics) {
       try {
         await axios.post(
           "https://api.twitch.tv/helix/eventsub/subscriptions",
           {
-            type,
-            version,
+            type: topic.type,
+            version: topic.version,
             condition:
-              type === "channel.raid"
+              topic.type === "channel.raid"
                 ? { to_broadcaster_user_id: userId }
                 : { broadcaster_user_id: userId },
             transport: {
@@ -270,10 +240,10 @@ async function registerTwitchEvents() {
             },
           }
         );
-        console.log(`📡 Twitch EventSub "${type}" (v${version}) registriert.`);
+        console.log(`📡 Twitch EventSub "${topic.type}" (v${topic.version}) registriert.`);
       } catch (err) {
         console.log(
-          `⚠️ Twitch EventSub "${type}" konnte nicht registriert werden:`,
+          `⚠️ Twitch EventSub "${topic.type}" konnte nicht registriert werden:`,
           err.response?.data || err.message
         );
       }
@@ -283,46 +253,35 @@ async function registerTwitchEvents() {
   }
 }
 
-// ==================== 🌐 FRONTEND ====================
+// ==================== FRONTEND ====================
 app.get("/feed", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(`<!doctype html>
-<html lang="de">
-<head><meta charset="utf-8"/><title>McHobi's Activity Feed</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+  res.send(`<!doctype html><html lang="de"><head>
+<meta charset="utf-8"/><title>McHobi Feed</title>
 <style>
-:root{--bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#a5a5b0;--accent:#18e0d0;
---kofi:#ff7f32;--twitch:#9146ff;--sub:#6e46ff;--gift:#b57aff;--bits:#00c8ff;--points:#00ff95;--raid:#ff3d8e;}
+:root{--bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#aaa;--accent:#18e0d0;
+--kofi:#ff7f32;--sub:#6e46ff;--gift:#b57aff;--bits:#00c8ff;--raid:#ff3d8e;}
 body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Roboto,sans-serif;}
-header{padding:12px 18px;background:rgba(20,20,25,.85);border-bottom:1px solid #222;
-backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:space-between;}
-header h1{font-size:18px;margin:0;}#status{font-size:13px;color:var(--muted);}
 #feed{padding:16px;display:flex;flex-direction:column;}
-.entry{background:var(--card);margin-bottom:10px;padding:10px 14px;border-left:4px solid var(--accent);
-border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,.25);animation:fadeIn .3s ease forwards;}
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.msg{font-weight:600;}.time{font-size:12px;color:var(--muted);margin-top:2px;}
-.kofi{border-left-color:var(--kofi)}.twitch_follow{border-left-color:var(--twitch)}
-.twitch_sub{border-left-color:var(--sub)}.twitch_gift{border-left-color:var(--gift)}
-.twitch_bits{border-left-color:var(--bits)}.twitch_points{border-left-color:var(--points)}
+.entry{background:var(--card);margin-bottom:10px;padding:10px 14px;
+border-left:4px solid var(--accent);border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,.25);}
+.kofi{border-left-color:var(--kofi)}.twitch_sub{border-left-color:var(--sub)}
+.twitch_gift{border-left-color:var(--gift)}.twitch_bits{border-left-color:var(--bits)}
 .twitch_raid{border-left-color:var(--raid)}
-</style></head><body>
-<header><h1>🎧 McHobi's Activity Feed</h1><div id="status">Verbinde…</div></header>
-<div id="feed"></div>
+</style></head><body><div id="feed"></div>
 <script>
-const f=document.getElementById("feed"),s=document.getElementById("status");
-function t(e){return new Date(e).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}
-function a(e){const d=document.createElement("div");d.className="entry "+e.type;
-d.innerHTML=\`<div class="msg">\${e.message}</div><div class="time">\${t(e.time)}</div>\`;f.prepend(d)}
-const es=new EventSource("/events");es.onopen=()=>s.textContent="🟢 Live verbunden";
-es.onerror=()=>s.textContent="🔴 Verbindung getrennt…";es.onmessage=e=>{try{a(JSON.parse(e.data))}catch{}};
+const f=document.getElementById("feed");
+function add(e){const d=document.createElement("div");
+d.className="entry "+e.type;
+d.innerHTML=\`<div>\${e.message}</div>\`;
+f.prepend(d);}
+const es=new EventSource("/events");
+es.onmessage=e=>{try{add(JSON.parse(e.data))}catch{}};
 </script></body></html>`);
 });
 
-// === HEALTH CHECK ===
 app.get("/healthz", (_, res) => res.send("OK"));
 
-// === START SERVER ===
 app.listen(PORT, async () => {
   console.log(`🚀 Server läuft auf Port ${PORT}`);
   await registerTwitchEvents();
