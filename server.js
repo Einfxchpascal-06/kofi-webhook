@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch (EventSub v2 fixed) + Ko-fi + Feed Display
+// Twitch (EventSub v1 – aktuelle Typen 2025) + Ko-fi + Feed Display
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -34,6 +34,7 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
+  // immer neueste oben
   for (const e of [...feedEntries].reverse()) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
@@ -100,7 +101,6 @@ app.post("/kofi", (req, res) => {
 });
 
 // ==================== 🟣 TWITCH EVENTSUB ====================
-
 function verifyTwitchSignature(req) {
   const msgId = req.header("Twitch-Eventsub-Message-Id");
   const timestamp = req.header("Twitch-Eventsub-Message-Timestamp");
@@ -132,10 +132,12 @@ app.post("/twitch", (req, res) => {
   if (msgType === "notification") {
     try {
       switch (type) {
-        case "channel.subscribe":
+        case "channel.subscription.message":
           pushFeed({
             type: "twitch_sub",
-            message: `💜 Sub: ${event.user_name || "Neuer Sub"} – Tier ${event.tier / 1000 || 1} (${event.cumulative_months || 1} Monate)`,
+            message: `💜 Sub von ${event.user_name || "Neuer Sub"} – Tier ${
+              event.tier / 1000 || 1
+            } (${event.cumulative_months || 1} Monate)`,
             time: Date.now(),
           });
           break;
@@ -143,7 +145,9 @@ app.post("/twitch", (req, res) => {
         case "channel.subscription.gift":
           pushFeed({
             type: "twitch_gift",
-            message: `🎁 ${event.user_name || "Jemand"} verschenkte ${event.total || 1} Sub(s)!`,
+            message: `🎁 ${event.user_name || "Jemand"} verschenkte ${
+              event.total || 1
+            } Sub(s)!`,
             time: Date.now(),
           });
           break;
@@ -207,12 +211,12 @@ async function registerTwitchEvents() {
     const userId = userRes.data.data[0].id;
     console.log("🆔 Twitch User-ID:", userId);
 
-    // Nur unterstützte Topics (App-Token-kompatibel)
+    // === Nur gültige Typen (v1, 2025) ===
     const topics = [
-      { type: "channel.subscribe", version: "2" },
-      { type: "channel.subscription.gift", version: "2" },
+      { type: "channel.subscription.message", version: "1" },
+      { type: "channel.subscription.gift", version: "1" },
       { type: "channel.cheer", version: "1" },
-      { type: "channel.raid", version: "2" },
+      { type: "channel.raid", version: "1" },
     ];
 
     for (const topic of topics) {
@@ -259,7 +263,7 @@ app.get("/feed", (req, res) => {
   res.send(`<!doctype html><html lang="de"><head>
 <meta charset="utf-8"/><title>McHobi Feed</title>
 <style>
-:root{--bg:#0e0e10;--card:#15151a;--text:#fff;--muted:#aaa;--accent:#18e0d0;
+:root{--bg:#0e0e10;--card:#15151a;--text:#fff;--accent:#18e0d0;
 --kofi:#ff7f32;--sub:#6e46ff;--gift:#b57aff;--bits:#00c8ff;--raid:#ff3d8e;}
 body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Roboto,sans-serif;}
 #feed{padding:16px;display:flex;flex-direction:column;}
@@ -283,6 +287,6 @@ es.onmessage=e=>{try{add(JSON.parse(e.data))}catch{}};
 app.get("/healthz", (_, res) => res.send("OK"));
 
 app.listen(PORT, async () => {
-  console.log(`🚀 Server läuft auf Port ${PORT}`);
+  console.log(\`🚀 Server läuft auf Port \${PORT}\`);
   await registerTwitchEvents();
 });
