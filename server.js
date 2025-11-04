@@ -1,5 +1,5 @@
 // === McHobi Activity Feed Server ===
-// Twitch (EventSub) + Ko-fi + Feed + Autoping – Vollautomatisch 😎
+// Twitch (EventSub v2 fix) + Ko-fi + Feed + Autoping 😎
 
 import express from "express";
 import bodyParser from "body-parser";
@@ -15,7 +15,7 @@ const KOFI_VERIFICATION_TOKEN = process.env.KO_FI_TOKEN;
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_USER = process.env.TWITCH_USER;
-const TWITCH_SECRET = "soundwave_secret_2025"; // eigener Signaturschlüssel
+const TWITCH_SECRET = "soundwave_secret_2025";
 
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -34,7 +34,6 @@ app.get("/events", (req, res) => {
     "Access-Control-Allow-Origin": "*",
   });
 
-  // Neueste zuerst senden
   for (const e of [...feedEntries].reverse()) {
     res.write(`data: ${JSON.stringify(e)}\n\n`);
   }
@@ -107,7 +106,6 @@ app.post("/kofi", (req, res) => {
 
 // ==================== 🟣 TWITCH EVENTSUB ====================
 
-// Twitch Signatur-Prüfung
 function verifyTwitchSignature(req) {
   const msgId = req.header("Twitch-Eventsub-Message-Id");
   const timestamp = req.header("Twitch-Eventsub-Message-Timestamp");
@@ -119,7 +117,6 @@ function verifyTwitchSignature(req) {
   return signature === expected;
 }
 
-// Twitch Event-Endpunkt
 app.post("/twitch", (req, res) => {
   const msgType = req.header("Twitch-Eventsub-Message-Type");
 
@@ -135,7 +132,6 @@ app.post("/twitch", (req, res) => {
 
   const event = req.body.event;
   const type = req.body.subscription?.type;
-
   console.log("🎯 Twitch Event:", type, event);
 
   if (msgType === "notification") {
@@ -148,14 +144,14 @@ app.post("/twitch", (req, res) => {
         case "channel.subscribe":
           pushFeed({
             type: "twitch_sub",
-            message: `💜 Sub: ${event.user_name || "Neuer Sub"} – Tier ${event.tier / 1000} (${event.cumulative_months || 1} Monate)`,
+            message: `💜 Sub: ${event.user_name || "Neuer Sub"} – Tier ${event.tier / 1000 || 1} (${event.cumulative_months || 1} Monate)`,
             time: Date.now(),
           });
           break;
 
         case "channel.subscription.gift": {
           const gifter = event.user_name || "Unbekannt";
-          const count = event.total || event.total || 1;
+          const count = event.total || 1;
           pushFeed({
             type: "twitch_gift",
             message: `🎁 Gift Sub: ${gifter} → ${count}`,
@@ -193,9 +189,7 @@ app.post("/twitch", (req, res) => {
 
         case "channel.raid": {
           const raider =
-            event.from_broadcaster_user_name ||
-            event.broadcaster_user_name ||
-            "Unbekannt";
+            event.from_broadcaster_user_name || event.broadcaster_user_name || "Unbekannt";
           const viewers = event.viewers || 0;
           pushFeed({
             type: "twitch_raid",
@@ -213,7 +207,7 @@ app.post("/twitch", (req, res) => {
   res.sendStatus(200);
 });
 
-// === Twitch OAuth Callback (NEU) ===
+// === Twitch OAuth Callback ===
 app.get("/twitch/callback", (req, res) => {
   const code = req.query.code;
   if (!code) return res.status(400).send("Fehlender Code");
@@ -251,11 +245,15 @@ async function registerTwitchEvents() {
     ];
 
     for (const type of topics) {
+      const version = ["channel.subscribe", "channel.subscription.gift", "channel.raid"].includes(type)
+        ? "2"
+        : "1";
+
       await axios.post(
         "https://api.twitch.tv/helix/eventsub/subscriptions",
         {
           type,
-          version: "1",
+          version,
           condition: type === "channel.raid"
             ? { to_broadcaster_user_id: userId }
             : { broadcaster_user_id: userId },
@@ -266,10 +264,14 @@ async function registerTwitchEvents() {
           },
         },
         {
-          headers: { Authorization: `Bearer ${appToken}`, "Client-Id": TWITCH_CLIENT_ID, "Content-Type": "application/json" },
+          headers: {
+            Authorization: `Bearer ${appToken}`,
+            "Client-Id": TWITCH_CLIENT_ID,
+            "Content-Type": "application/json",
+          },
         }
       );
-      console.log(`📡 Twitch EventSub "${type}" registriert.`);
+      console.log(`📡 Twitch EventSub "${type}" (v${version}) registriert.`);
     }
   } catch (err) {
     console.error("❌ Fehler beim Twitch-EventSub-Setup:", err.response?.data || err.message);
